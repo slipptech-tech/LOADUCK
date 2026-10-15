@@ -1,0 +1,797 @@
+#include "dlp.h"
+#include "util.h"
+#include "render.h"
+#include "json.h"
+
+#include <Windows.h>
+#include <winhttp.h>
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <set>
+#include <sstream>
+
+#pragma comment(lib, "winhttp.lib")
+
+namespace {
+
+// ── Чтение из канала процесса с разбиением на строки ──────────────────────
+class PipeReader {
+public:
+    // maxTail == 0 — не обрезать (нужно для полного JSON от yt-dlp)
+    size_t maxTail = 60000;
+
+    void Run(HANDLE h, const std::function<void(const std::string&)>& onLine, std::string* tailAll) {
+        if (!h) return;
+        char buf[8192];
+        std::string pending;
+        DWORD read = 0;
+        for (;;) {
+            if (!ReadFile(h, buf, (DWORD)sizeof buf, &read, nullptr) || read == 0) break;
+            pending.append(buf, read);
+            size_t pos;
+            while ((pos = pending.find('\n')) != std::string::npos) {
+                std::string line = pending.substr(0, pos);
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                pending.erase(0, pos + 1);
+                if (tailAll) {
+                    tailAll->append(line);
+                    tailAll->push_back('\n');
+                    if (maxTail && tailAll->size() > maxTail) tailAll->erase(0, tailAll->size() - maxTail / 2);
+                }
+                if (onLine) onLine(line);
+            }
+        }
+        if (!pending.empty()) {
+            if (tailAll) { tailAll->append(pending); tailAll->push_back('\n'); }
+            if (onLine) onLine(pending);
+        }
+    }
+};
+
+struct Proc {
+    HANDLE process = nullptr;
+    HANDLE thread = nullptr;
+    HANDLE readOut = nullptr;
+    HANDLE readErr = nullptr;
+    DWORD pid = 0;
+
+    bool Start(const std::wstring& exe, const std::wstring& args) {
+        SECURITY_ATTRIBUTES sa{ sizeof(sa), nullptr, TRUE };
+        HANDLE wOut = nullptr, wErr = nullptr;
+        if (!CreatePipe(&readOut, &wOut, &sa, 0)) return false;
+        if (!CreatePipe(&readErr, &wErr, &sa, 0)) { CloseHandle(readOut); CloseHandle(wOut); return false; }
+
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        si.hStdInput = nullptr;
+        si.hStdOutput = wOut;
+        si.hStdError = wErr;
+
+        PROCESS_INFORMATION pi{};
+        std::wstring cmd = L"\"" + exe + L"\" " + args;
+        std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
+        cmdBuf.push_back(0);
+
+        SetEnvironmentVariableW(L"PYTHONIOENCODING", L"utf-8");
+        SetEnvironmentVariableW(L"PYTHONUTF8", L"1");
+
+        BOOL ok = CreateProcessW(exe.c_str(), cmdBuf.data(), nullptr, nullptr, TRUE,
+                                 CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+        CloseHandle(wOut);
+        CloseHandle(wErr);
+        if (!ok) {
+            CloseHandle(readOut);
+            CloseHandle(readErr);
+            readOut = readErr = nullptr;
+            return false;
+        }
+        process = pi.hProcess;
+        thread = pi.hThread;
+        pid = pi.dwProcessId;
+        return true;
+    }
+
+    int Wait() {
+        if (!process) return -1;
+        WaitForSingleObject(process, INFINITE);
+        DWORD code = 0;
+        GetExitCodeProcess(process, &code);
+        CloseHandle(process);
+        if (thread) CloseHandle(thread);
+        process = thread = nullptr;
+        CloseHandle(readOut); readOut = nullptr;
+        CloseHandle(readErr); readErr = nullptr;
+        return (int)code;
+    }
+};
+
+void KillTree(DWORD pid) {
+    if (!pid) return;
+    std::wstring cmd = L"taskkill.exe /PID " + std::to_wstring(pid) + L" /T /F";
+    std::vector<wchar_t> cb(cmd.begin(), cmd.end());
+    cb.push_back(0);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (CreateProcessW(L"taskkill.exe", cb.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        WaitForSingleObject(pi.hProcess, 4000);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }
+}
+
+int RunProcess(const std::wstring& exe, const std::wstring& args,
+               const std::function<void(const std::string&)>& onLine,
+               std::string* fullOut, std::string* errTail) {
+    Proc p;
+    if (!p.Start(exe, args)) return -1;
+    PipeReader r1, r2;
+    std::thread t1([&] { r1.Run(p.readOut, onLine, fullOut); });
+    std::thread t2([&] { r2.Run(p.readErr, nullptr, errTail); });
+    t1.join();
+    t2.join();
+    return p.Wait();
+}
+
+std::vector<std::string> SplitStr(const std::string& s, char sep) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : s) {
+        if (c == sep) { out.push_back(cur); cur.clear(); }
+        else cur += c;
+    }
+    out.push_back(cur);
+    return out;
+}
+
+bool IsNum(const std::string& s) {
+    if (s.empty()) return false;
+    size_t i = 0;
+    if (s[0] == '-' || s[0] == '+') i = 1;
+    if (i >= s.size()) return false;
+    for (; i < s.size(); ++i)
+        if (!isdigit((unsigned char)s[i]) && s[i] != '.' && s[i] != 'e' && s[i] != 'E') return false;
+    return true;
+}
+
+int ParseEta(const std::string& s) {
+    if (!IsNum(s)) return 0;
+    if (s.find(':') == std::string::npos) return (int)strtol(s.c_str(), nullptr, 10);
+    int total = 0;
+    std::string cur;
+    for (char c : s + ":") {
+        if (c == ':') { total = total * 60 + atoi(cur.c_str()); cur.clear(); }
+        else cur += c;
+    }
+    return total;
+}
+
+// Читает оба канала уже запущенного процесса и дожидается его завершения
+int PumpAndWait(Proc& proc, const std::function<void(const std::string&)>& onLine, std::string* errTail) {
+    PipeReader r1, r2;
+    std::thread t1([&] { r1.Run(proc.readOut, onLine, nullptr); });
+    std::thread t2([&] { r2.Run(proc.readErr, nullptr, errTail); });
+    t1.join();
+    t2.join();
+    return proc.Wait();
+}
+
+} // namespace
+
+// ── Job ───────────────────────────────────────────────────────────────────
+
+Job::Job(JobOptions opt) : opt_(std::move(opt)) {
+    createdAt_ = (double)GetTickCount64();
+    prog_.stage = L"В очереди";
+}
+
+Job::~Job() {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        cancelRequested_ = true;
+    }
+    DWORD pid = 0;
+    { std::lock_guard<std::mutex> lk(mu_); pid = pid_; }
+    if (pid) KillTree(pid);
+    if (worker_.joinable()) worker_.join();
+}
+
+void Job::Start(const std::wstring& exePath) {
+    if (worker_.joinable()) worker_.join();
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        exePath_ = exePath;
+        cancelRequested_ = false;
+        paused_ = false;
+        state_ = JobState::Running;
+        prog_ = JobProgress();
+        prog_.stage = L"Подготовка";
+        error_.clear();
+        pid_ = 0;
+        notified_ = false;
+    }
+    worker_ = std::thread([this] { Run(); });
+}
+
+void Job::Run() {
+    std::wstring exe;
+    { std::lock_guard<std::mutex> lk(mu_); exe = exePath_.empty() ? engine::ResolveTool(L"", L"yt-dlp.exe") : exePath_; }
+
+    if (exe.empty() || !util::FileExists(exe)) {
+        std::lock_guard<std::mutex> lk(mu_);
+        state_ = JobState::Failed;
+        prog_.stage = L"Ошибка";
+        error_ = L"Не найден yt-dlp.exe. Установите компоненты в настройках.";
+        return;
+    }
+
+    std::wstring outTpl = opt_.outTemplate.empty() ? L"%(title)s.%(ext)s" : opt_.outTemplate;
+    std::wstring outPath = util::PathJoin(opt_.outDir, outTpl);
+
+    std::wstring args;
+    args = L"--no-playlist --no-warnings --no-color --newline --ignore-config --continue ";
+    args += L"--progress ";
+    args += L"--progress-template \"download:LUPD@@%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s\" ";
+    args += L"--progress-template \"postprocess:LUPP@@%(progress.status)s\" ";
+    args += L"--print \"before_dl:LU@@TITLE@@%(title).180B [%(id)s]\" ";
+    args += L"--print \"before_dl:LU@@APX@@%(filesize,filesize_approx)s\" ";
+    args += L"--print \"after_move:LU@@FILE@@%(filepath)s\" ";
+    args += L"--windows-filenames ";
+    args += L"-o \"" + outPath + L"\" ";
+
+    if (!opt_.formatSel.empty()) args += L"-f \"" + util::Utf8ToWide(opt_.formatSel) + L"\" ";
+
+    if (opt_.audioOnly) {
+        args += L"-x --audio-format " + opt_.audioFormat + L" ";
+    } else if (opt_.mergeTo && !opt_.container.empty()) {
+        args += L"--merge-output-format " + opt_.container + L" ";
+    }
+    if (opt_.embedMeta) args += L"--embed-metadata ";
+    if (opt_.embedThumb) args += L"--embed-thumbnail ";
+    if (opt_.writeSubs) args += L"--write-subs --sub-langs \"ru,en\" ";
+    if (opt_.embedSubs) args += L"--embed-subs --sub-langs \"ru,en\" ";
+    if (opt_.useCookies && !opt_.cookiesBrowser.empty())
+        args += L"--cookies-from-browser " + opt_.cookiesBrowser + L" ";
+    if (opt_.rateLimit > 0)
+        args += L"--limit-rate " + std::to_wstring(opt_.rateLimit) + L"K ";
+    // Явно указываем ffmpeg: в системе может лежать ancient-сборка, которая не понимает
+    // современные кодеки и роняет постобработку.
+    if (!opt_.ffmpegPath.empty() && util::FileExists(opt_.ffmpegPath))
+        args += L"--ffmpeg-location \"" + util::DirName(opt_.ffmpegPath) + L"\" ";
+    args += L"\"" + opt_.url + L"\"";
+
+    std::string errTail;
+    Proc proc;
+    if (!proc.Start(exe, args)) {
+        std::lock_guard<std::mutex> lk(mu_);
+        state_ = JobState::Failed;
+        prog_.stage = L"Ошибка";
+        error_ = L"Не удалось запустить yt-dlp";
+        return;
+    }
+    { std::lock_guard<std::mutex> lk(mu_); pid_ = proc.pid; }
+
+    auto onLine = [&](const std::string& line) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (cancelRequested_) return;
+
+        if (line.rfind("LUPD@@", 0) == 0) {
+            auto parts = SplitStr(line.substr(6), '|');
+            if (parts.size() >= 5) {
+                uint64_t done = IsNum(parts[0]) ? strtoull(parts[0].c_str(), nullptr, 10) : 0;
+                uint64_t total = 0;
+                if (IsNum(parts[1])) total = strtoull(parts[1].c_str(), nullptr, 10);
+                else if (parts.size() > 2 && IsNum(parts[2])) total = strtoull(parts[2].c_str(), nullptr, 10);
+                prog_.downloaded = done;
+                if (total > 0) prog_.total = total;
+                if (IsNum(parts[3])) prog_.speed = strtod(parts[3].c_str(), nullptr);
+                prog_.eta = ParseEta(parts[4]);
+                if (prog_.total > 0) prog_.pct = std::min(1.0, (double)prog_.downloaded / (double)prog_.total);
+                else prog_.pct = std::min(prog_.pct + 0.0002, 0.999);
+                prog_.stage = L"Загрузка";
+            }
+            return;
+        }
+        if (line.rfind("LUPP@@", 0) == 0) {
+            prog_.stage = L"Обработка";
+            return;
+        }
+        if (line.rfind("LU@@", 0) == 0) {
+            size_t p2 = line.find("@@", 4);
+            if (p2 == std::string::npos) return;
+            std::string key = line.substr(4, p2 - 4);
+            std::string val = line.substr(p2 + 2);
+            if (key == "FILE") {
+                file_ = util::Utf8ToWide(val);
+            } else if (key == "TITLE") {
+                if (opt_.title.empty()) opt_.title = util::Utf8ToWide(val);
+            } else if (key == "APX") {
+                if (prog_.total == 0 && IsNum(val)) prog_.total = strtoull(val.c_str(), nullptr, 10);
+            }
+            return;
+        }
+        if (!line.empty() && line[0] == '[') {
+            if (line.find("Merger") != std::string::npos) prog_.stage = L"Объединение дорожек";
+            else if (line.find("ExtractAudio") != std::string::npos) prog_.stage = L"Извлечение аудио";
+            else if (line.find("Subtitle") != std::string::npos) prog_.stage = L"Субтитры";
+            else if (line.find("Writing") != std::string::npos) prog_.stage = L"Сохранение";
+        }
+    };
+
+    int code = PumpAndWait(proc, onLine, &errTail);
+
+    std::lock_guard<std::mutex> lk(mu_);
+    pid_ = 0;
+    if (cancelRequested_) {
+        state_ = paused_ ? JobState::Paused : JobState::Canceled;
+        prog_.stage = paused_ ? L"На паузе" : L"Отменено";
+        return;
+    }
+    if (code == 0) {
+        state_ = JobState::Done;
+        prog_.pct = 1.0;
+        prog_.speed = 0;
+        prog_.eta = 0;
+        prog_.stage = L"Готово";
+    } else {
+        // Файл мог скачаться, а сломаться постобработка (метаданные, обложка).
+        std::wstring warn = util::Utf8ToWide(errTail);
+        size_t pos = warn.find(L"ERROR:");
+        if (pos != std::wstring::npos) warn = warn.substr(pos);
+        if (!warn.empty() && warn.back() == L'\r') warn.pop_back();
+
+        bool haveFile = !file_.empty() && util::FileExists(file_);
+        if (haveFile) {
+            state_ = JobState::Done;
+            prog_.pct = 1.0;
+            prog_.speed = 0;
+            prog_.eta = 0;
+            prog_.stage = L"Готово без метаданных";
+            if (warn.size() > 160) warn.resize(160);
+            error_ = warn;   // показываем как предупреждение
+        } else {
+            state_ = JobState::Failed;
+            prog_.stage = L"Ошибка";
+            error_ = warn;
+            if (error_.size() > 700) error_ = error_.substr(error_.size() - 700);
+        }
+        if (error_.empty()) error_ = L"yt-dlp завершился с кодом " + std::to_wstring(code);
+    }
+}
+
+void Job::Cancel() {
+    DWORD pid = 0;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        cancelRequested_ = true;
+        paused_ = false;
+        if (state_ == JobState::Queued) state_ = JobState::Canceled;
+        pid = pid_;
+    }
+    if (pid) KillTree(pid);
+}
+
+void Job::Pause() {
+    DWORD pid = 0;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        cancelRequested_ = true;
+        paused_ = true;
+        pid = pid_;
+    }
+    if (pid) KillTree(pid);
+}
+
+void Job::Resume(const std::wstring& exePath) { Start(exePath); }
+void Job::Retry(const std::wstring& exePath) { Start(exePath); }
+
+JobState Job::GetState() const { std::lock_guard<std::mutex> lk(mu_); return state_; }
+JobProgress Job::GetProgress() const { std::lock_guard<std::mutex> lk(mu_); return prog_; }
+std::wstring Job::GetFile() const { std::lock_guard<std::mutex> lk(mu_); return file_; }
+std::wstring Job::GetError() const { std::lock_guard<std::mutex> lk(mu_); return error_; }
+
+uint64_t Job::GetResultSize() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (file_.empty()) return 0;
+    return util::FileSize(file_);
+}
+
+std::wstring Job::GetStage() const { std::lock_guard<std::mutex> lk(mu_); return prog_.stage; }
+
+bool Job::IsActive() const {
+    JobState s = GetState();
+    return s == JobState::Running || s == JobState::Queued;
+}
+
+// ── engine ────────────────────────────────────────────────────────────────
+
+namespace engine {
+
+std::wstring ResolveTool(const std::wstring& configured, const std::wstring& exeName) {
+    if (!configured.empty() && util::FileExists(configured)) return configured;
+    std::wstring bin = util::PathJoin(util::BinDir(), exeName);
+    if (util::FileExists(bin)) return bin;
+    std::wstring inExeDir = util::PathJoin(util::ExeDir(), exeName);
+    if (util::FileExists(inExeDir)) return inExeDir;
+    std::wstring up = util::PathJoin(util::DirName(util::ExeDir()), exeName);
+    if (util::FileExists(up)) return up;
+    return util::FindOnPath(exeName);
+}
+
+bool HasYtdlp(const std::wstring& path) { return util::FileExists(path); }
+bool HasFfmpeg(const std::wstring& path) { return util::FileExists(path); }
+
+std::string RunCapture(const std::wstring& exe, const std::wstring& args, int* exitCode, size_t maxBytes) {
+    std::string out, errTail;
+    Proc p;
+    if (!p.Start(exe, args)) {
+        if (exitCode) *exitCode = -1;
+        return {};
+    }
+    PipeReader rd;
+    rd.maxTail = 0;   // ответ целиком: -J может вернуть несколько мегабайт
+    rd.Run(p.readOut, nullptr, &out);
+    std::thread t([&] { PipeReader e; e.Run(p.readErr, nullptr, &errTail); });
+    int code = p.Wait();
+    t.join();
+    if (exitCode) *exitCode = code;
+    if (maxBytes && out.size() > maxBytes) out.resize(maxBytes);
+    return out;
+}
+
+std::wstring YtdlpVersion(const std::wstring& path) {
+    if (!util::FileExists(path)) return {};
+    int code = 0;
+    std::string out = RunCapture(path, L"--version", &code, 4096);
+    if (code != 0) return {};
+    return util::Trim(util::Utf8ToWide(out));
+}
+
+bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err) {
+    out = MediaInfo();
+    std::wstring exe = ResolveTool(L"", L"yt-dlp.exe");
+    if (exe.empty()) {
+        err = L"Не найден yt-dlp.exe. Откройте «Настройки» и установите компоненты.";
+        return false;
+    }
+    std::wstring args = L"--no-playlist --no-warnings --no-color --ignore-config -J \"" + url + L"\"";
+    int code = 0;
+    std::string text = RunCapture(exe, args, &code, 64u * 1024 * 1024);
+    if (code != 0 || text.empty()) {
+        // повторяем запрос, чтобы забрать текст ошибки из stderr
+        std::string errText;
+        Proc p;
+        if (p.Start(exe, L"--no-color --ignore-config --simulate \"" + url + L"\"")) {
+            PumpAndWait(p, nullptr, &errText);
+        }
+        std::string tail = errText;
+        size_t pos = tail.find("ERROR:");
+        if (pos != std::string::npos) tail = tail.substr(pos);
+        if (tail.empty()) tail = "yt-dlp не смог обработать ссылку (код " + std::to_string(code) + ")";
+        err = util::Utf8ToWide(tail.substr(0, 600));
+        return false;
+    }
+
+    Json j;
+    if (!Json::Parse(text, j) || !j.isObj()) {
+        err = L"Не удалось разобрать ответ yt-dlp";
+        return false;
+    }
+
+    out.id = j["id"].asStr();
+    out.title = j["title"].asStr();
+    out.uploader = j["uploader"].asStr();
+    out.extractor = j["extractor"].asStr();
+    out.extractorKey = j["extractor_key"].asStr();
+    out.webpageUrl = j["webpage_url"].asStr();
+    out.thumbnail = j["thumbnail"].asStr();
+    if (out.thumbnail.empty()) {
+        // Некоторые экстракторы отдают только массив thumbnails
+        const Json& th = j["thumbnails"];
+        std::string best;
+        for (size_t i = 0; i < th.size(); ++i) {
+            std::string u = th[i]["url"].asStr();
+            if (u.empty()) continue;
+            if (u.find("maxres") != std::string::npos) { best = u; break; }
+            if (u.size() > best.size()) best = u;
+        }
+        out.thumbnail = best;
+    }
+    if (out.thumbnail.empty() && !out.id.empty())
+        out.thumbnail = "https://i.ytimg.com/vi/" + out.id + "/hqdefault.jpg";
+    // WIC не понимает WebP/AVIF: приводим путь и расширение к JPEG
+    {
+        std::string& th = out.thumbnail;
+        const char* bad[] = { "/vi_webp/", "/vi_avif/" };
+        for (const char* b : bad) {
+            size_t k = th.find(b);
+            if (k != std::string::npos) th = th.substr(0, k) + "/vi/" + th.substr(k + 9);
+        }
+        size_t slash = th.rfind('/');
+        if (slash != std::string::npos) {
+            std::string tail = th.substr(slash + 1);
+            size_t dot = tail.rfind('.');
+            if (dot != std::string::npos) {
+                std::string ext = tail.substr(dot);
+                for (auto& c : ext) c = (char)tolower((unsigned char)c);
+                if (ext == ".webp" || ext == ".avif")
+                    th = th.substr(0, slash + 1) + tail.substr(0, dot) + ".jpg";
+            }
+        }
+    }
+    out.duration = j["duration"].asNum(0);
+    out.durationText = j["duration_string"].asStr();
+    out.viewCount = j["view_count"].asInt(0);
+    out.likeCount = j["like_count"].asInt(0);
+    out.isLive = j["is_live"].asBool(false);
+    out.isPlaylist = j["_type"].asStr() == "playlist";
+    if (out.isPlaylist) out.playlistCount = (int)j["playlist_count"].asInt(0);
+
+    const Json& fmts = j["formats"];
+    std::set<int> heights, heights264;
+    for (size_t i = 0; i < fmts.size(); ++i) {
+        const Json& f = fmts[i];
+        MediaFormat mf;
+        mf.id = f["format_id"].asStr();
+        mf.ext = f["ext"].asStr();
+        mf.vcodec = f["vcodec"].asStr();
+        mf.acodec = f["acodec"].asStr();
+        mf.resolution = f["resolution"].asStr();
+        mf.note = f["format_note"].asStr();
+        mf.height = (int)f["height"].asInt(0);
+        mf.width = (int)f["width"].asInt(0);
+        mf.fps = f["fps"].asNum(0);
+        mf.filesize = (uint64_t)f["filesize"].asInt(0);
+        if (mf.filesize == 0) mf.filesize = (uint64_t)f["filesize_approx"].asInt(0);
+        mf.tbr = (int)f["tbr"].asInt(0);
+        mf.hasVideo = !mf.vcodec.empty() && mf.vcodec != "none";
+        mf.hasAudio = !mf.acodec.empty() && mf.acodec != "none";
+        mf.combined = mf.hasVideo && mf.hasAudio;
+        if (mf.id.empty()) continue;
+        if (!mf.hasVideo && !mf.hasAudio) continue;
+        if (mf.height > 0 && mf.hasVideo) {
+            heights.insert(mf.height);
+            std::string vc = mf.vcodec;
+            for (auto& ch : vc) ch = (char)tolower((unsigned char)ch);
+            if (vc.rfind("avc", 0) == 0) {          // avc1… — H.264
+                heights264.insert(mf.height);
+                out.hasH264 = true;
+            }
+        }
+        out.formats.push_back(mf);
+    }
+    for (auto it = heights.rbegin(); it != heights.rend(); ++it) out.heights.push_back(*it);
+    for (auto it = heights264.rbegin(); it != heights264.rend(); ++it) out.heightsH264.push_back(*it);
+    std::stable_sort(out.formats.begin(), out.formats.end(),
+                     [](const MediaFormat& a, const MediaFormat& b) {
+                         if (a.height != b.height) return a.height > b.height;
+                         return a.tbr > b.tbr;
+                     });
+
+    if (out.title.empty() && out.isPlaylist && j["entries"].isArr())
+        out.playlistCount = (int)j["entries"].size();
+    if (out.title.empty()) {
+        err = L"Ссылка не содержит доступного видео";
+        return false;
+    }
+    return true;
+}
+
+// ── HTTP ──────────────────────────────────────────────────────────────────
+
+    static bool HttpGet(const std::wstring& url, std::vector<uint8_t>* out, uint64_t* total,
+                    const std::function<void(uint64_t)>& progress, std::wstring* errOut) {
+    HINTERNET session = WinHttpOpen(L"LOADUCK/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) {
+        if (errOut) *errOut = L"Не удалось создать сетевое соединение";
+        return false;
+    }
+    WinHttpSetTimeouts(session, 30000, 30000, 60000, 120000);
+
+    URL_COMPONENTS uc{};
+    wchar_t host[256]{};
+    wchar_t path[2048]{};
+    uc.dwStructSize = sizeof(uc);
+    uc.lpszHostName = host;
+    uc.dwHostNameLength = ARRAYSIZE(host);
+    uc.lpszUrlPath = path;
+    uc.dwUrlPathLength = ARRAYSIZE(path);
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) {
+        if (errOut) *errOut = L"Некорректный адрес";
+        WinHttpCloseHandle(session);
+        return false;
+    }
+    bool secure = (uc.nScheme == INTERNET_SCHEME_HTTPS);
+
+    HINTERNET conn = WinHttpConnect(session, host, uc.nPort, 0);
+    if (!conn) {
+        if (errOut) *errOut = L"Не удалось подключиться к серверу";
+        WinHttpCloseHandle(session);
+        return false;
+    }
+    DWORD flags = WINHTTP_FLAG_REFRESH;
+    if (secure) flags |= WINHTTP_FLAG_SECURE;
+    HINTERNET req = WinHttpOpenRequest(conn, L"GET", path, nullptr, WINHTTP_NO_REFERER,
+                                       WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    if (!req) {
+        if (errOut) *errOut = L"Не удалось создать запрос";
+        WinHttpCloseHandle(conn);
+        WinHttpCloseHandle(session);
+        return false;
+    }
+    DWORD redir = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+    WinHttpSetOption(req, WINHTTP_OPTION_REDIRECT_POLICY, &redir, sizeof(redir));
+    DWORD dec = WINHTTP_DECOMPRESSION_FLAG_ALL;
+    WinHttpSetOption(req, WINHTTP_OPTION_DECOMPRESSION, &dec, sizeof(dec));
+
+
+// Некоторые CDN (i.ytimg.com) отвечают 403 без User-Agent
+    wchar_t ua[256];
+    swprintf_s(ua, L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   L"(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 LOADUCK/1.0");
+    DWORD uaLen = (DWORD)((wcslen(ua) + 1) * sizeof(wchar_t));
+    WinHttpSetOption(req, WINHTTP_OPTION_USER_AGENT, ua, uaLen);
+
+    BOOL okSend = WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+    BOOL okRecv = WinHttpReceiveResponse(req, nullptr);
+    bool ok = okSend && okRecv;
+    if (!ok) {
+        if (errOut) *errOut = L"Сервер не ответил";
+        WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(session);
+        return false;
+    }
+    DWORD status = 0, statusSize = sizeof(status);
+    WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                        WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX);
+    if (status != 200) {
+        if (errOut) *errOut = L"Сервер ответил кодом " + std::to_wstring(status);
+        WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(session);
+        return false;
+    }
+    DWORD len = 0, lenSize = sizeof(len);
+    WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                        WINHTTP_HEADER_NAME_BY_INDEX, &len, &lenSize, WINHTTP_NO_HEADER_INDEX);
+    if (total) *total = len;
+
+    std::vector<uint8_t> buf;
+    uint64_t received = 0;
+    const DWORD CHUNK = 1 << 16;
+    std::vector<uint8_t> chunk(CHUNK);
+    for (;;) {
+        DWORD read = 0;
+        if (!WinHttpReadData(req, chunk.data(), CHUNK, &read)) {
+            if (errOut) *errOut = L"Ошибка при загрузке данных";
+            WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(session);
+            return false;
+        }
+        if (read == 0) break;
+        buf.insert(buf.end(), chunk.begin(), chunk.begin() + read);
+        received += read;
+        if (progress) progress(received);
+    }
+    WinHttpCloseHandle(req);
+    WinHttpCloseHandle(conn);
+    WinHttpCloseHandle(session);
+    if (out) out->swap(buf);
+    return true;
+}
+
+void StartComponentDownload(const std::wstring& url, const std::wstring& dest,
+                            std::shared_ptr<ComponentDownload> state) {
+    state->dest = dest;
+    state->running = true;
+    state->done = false;
+    state->ok = false;
+    state->received = 0;
+    state->total = 0;
+    state->message = L"Подключение…";
+
+    std::thread([url, dest, state] {
+        util::EnsureDir(util::DirName(dest));
+        std::wstring tmp = dest + L".part";
+        uint64_t total = 0;
+        std::wstring err;
+        std::vector<uint8_t> data;
+        bool ok = HttpGet(url, &data, &total,
+                          [&](uint64_t got) {
+                              state->received = got;
+                              state->total = total;
+                          },
+                          &err);
+        if (!ok || data.empty()) {
+            state->message = err.empty() ? L"Не удалось скачать файл" : err;
+            state->done = true;
+            state->ok = false;
+            state->running = false;
+            return;
+        }
+        HANDLE f = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (f == INVALID_HANDLE_VALUE) {
+            state->message = L"Не удалось создать файл";
+            state->done = true;
+            state->ok = false;
+            state->running = false;
+            return;
+        }
+        DWORD written = 0;
+        WriteFile(f, data.data(), (DWORD)data.size(), &written, nullptr);
+        CloseHandle(f);
+        MoveFileExW(tmp.c_str(), dest.c_str(), MOVEFILE_REPLACE_EXISTING);
+        state->received = data.size();
+        state->total = data.size();
+        state->message = L"Готово";
+        state->ok = true;
+        state->done = true;
+        state->running = false;
+    }).detach();
+}
+
+static std::set<std::wstring> g_fetching;
+static std::mutex g_fetchMu;
+
+void FetchImage(const std::wstring& url) {
+    if (url.empty()) return;
+    {
+        std::lock_guard<std::mutex> lk(g_fetchMu);
+        if (ImageCache::Get(url)) return;
+        if (g_fetching.count(url)) return;
+        g_fetching.insert(url);
+    }
+    std::thread([url] {
+        std::vector<uint8_t> data;
+        uint64_t total = 0;
+        std::wstring err;
+        if (HttpGet(url, &data, &total, nullptr, &err) && !data.empty() && data.size() < 12u * 1024 * 1024) {
+            GfxImage img;
+            if (img.Load(data)) ImageCache::Put(url, std::move(img));
+        }
+        std::lock_guard<std::mutex> lk(g_fetchMu);
+        g_fetching.erase(url);
+    }).detach();
+}
+
+std::string NormalizeExt(const std::string& ext) {
+    std::string e = ext;
+    std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) { return (char)tolower(c); });
+    return e;
+}
+
+std::string FormatSelector(const std::wstring& quality, const std::wstring& container,
+                          const std::wstring& exactFormatId, bool preferH264) {
+    if (!exactFormatId.empty()) return util::WideToUtf8(exactFormatId) + "+bestaudio/best";
+
+    std::string q = util::WideToUtf8(quality);
+    std::string c = util::WideToUtf8(container);
+    std::transform(c.begin(), c.end(), c.begin(), [](unsigned char ch) { return (char)tolower(ch); });
+
+    if (q == "audio") return "bestaudio[ext=m4a]/bestaudio/best";
+
+    std::string h;
+    if (q != "best" && !q.empty()) h = "[height<=" + q + "]";
+
+    // Совместимый режим: H.264 + AAC — такой файл открывает любой системный плеер.
+    // Без него «Максимум» уводит в AV1/VP9, которые штатный плеер Windows не декодирует.
+    if (preferH264) {
+        std::string v = "bestvideo" + h + "[ext=mp4][vcodec~='^(avc|h264)']";
+        if (c == "mp4" || c == "auto" || c.empty())
+            return v + "+bestaudio[ext=m4a]/" + v + "+bestaudio/best" + h + "/best" + h + "[ext=mp4]/best" + h;
+        return v + "+bestaudio/best" + h;
+    }
+
+    if (c == "auto" || c.empty())
+        return h.empty() ? std::string("bestvideo*+bestaudio/best")
+                         : "bestvideo*" + h + "+bestaudio/best" + h + "/best" + h + "/best";
+    if (c == "mp4")
+        return "bestvideo" + h + "[ext=mp4]+bestaudio[ext=m4a]/bestvideo" + h + "[ext=mp4]+bestaudio/best" + h + "/best" + h;
+    if (c == "webm")
+        return "bestvideo" + h + "[ext=webm]+bestaudio[ext=webm]/bestvideo" + h + "[ext=webm]+bestaudio/best" + h + "/best" + h;
+    // mkv и прочие контейнеры
+    return "bestvideo" + h + "+bestaudio/best" + h + "/best" + h;
+}
+
+} // namespace engine
