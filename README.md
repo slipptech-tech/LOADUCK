@@ -1,4 +1,20 @@
-# LOADUCK
+
+<h1 align="center">LOADUCK</h1>
+
+<p align="center">
+  <strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/OPEN%20SOURCE-18181B?style=for-the-badge&logo=github&logoColor=white" alt="Open Source">
+  <img src="https://img.shields.io/badge/FREE-16A34A?style=for-the-badge&logo=freebsd&logoColor=white" alt="Free">
+  <img src="https://img.shields.io/badge/C++-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++">
+</p>
+
+<p align="center">
+  <em>
+</p>
+
 
 A native Windows application (C++ / Win32) for downloading videos from YouTube, TikTok, and 20+ other services.
 
@@ -95,3 +111,16 @@ Settings, download history, and logs are stored in `%LOCALAPPDATA%\LOADUCK`. You
 ## Disclaimer
 
 LOADUCK acts as a frontend for `yt-dlp`. Downloading copyrighted material may violate applicable laws. Only download content you have the right to access and save.
+
+
+<hr>
+
+<p align="center">
+  <a href="https://ko-fi.com/SlippTech">
+    <img src="https://ko-fi.com/img/githubbutton_sm.svg"
+         alt="Support me on Ko-fi"
+         width="260">
+  </a>
+</p>
+
+
