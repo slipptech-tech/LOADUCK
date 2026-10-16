@@ -45,6 +45,14 @@ bool Button(int id, const Rect& r, const std::wstring& label = L"", Icon ic = Ic
             Btn style = Btn::Secondary, bool enabled = true);
 bool IconButton(int id, const Rect& r, Icon ic, const std::wstring& tip = L"", Color tint = Color(), bool enabled = true);
 bool Chip(int id, const Rect& r, const std::wstring& label, bool selected = false, Icon ic = Icon::None);
+
+// Чип с подписью справа (например, «2160p  ~1.28 ГБ»). В отличие от Chip
+// содержимое выровнено по левому краю с одинаковыми отступами слева и
+// справа, поэтому ряд таких кнопок выглядит ровным, а не «плавающим».
+bool ChipWithSub(int id, const Rect& r, const std::wstring& label, const std::wstring& sub,
+                 bool selected = false, Icon ic = Icon::None);
+// Ширина, которую займёт такой чип при заданных подписях
+float ChipWithSubWidth(const std::wstring& label, const std::wstring& sub, Icon ic = Icon::None);
 bool Toggle(int id, const Rect& r, bool& on, Icon ic = Icon::None);
 bool TextField(int id, const Rect& r, std::wstring& value, const std::wstring& placeholder);
 bool AnyFieldFocused();

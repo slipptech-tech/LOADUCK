@@ -287,6 +287,69 @@ bool Chip(int id, const Rect& r, const std::wstring& label, bool selected, Icon 
     return pressed && in.released;
 }
 
+namespace {
+// Единая геометрия чипа с правой подписью. Все отступы одинаковые, поэтому
+// соседние кнопки в ряду выровнены по левому краю и по правому полю.
+constexpr float kPad = 14.0f;      // отступ слева и справа
+constexpr float kIcon = 15.0f;     // сторона иконки
+constexpr float kGap = 8.0f;       // промежуток иконка↔подпись и подпись↔размер
+} // namespace
+
+float ChipWithSubWidth(const std::wstring& label, const std::wstring& sub, Icon ic) {
+    float w = S(kPad) * 2;
+    if (ic != Icon::None) w += S(kIcon) + S(kGap);
+    w += R().MeasureText(label, fonts::SMALL, 400);
+    if (!sub.empty()) w += S(kGap) + R().MeasureText(sub, fonts::TINY, 400);
+    return w;
+}
+
+bool ChipWithSub(int id, const Rect& r, const std::wstring& label, const std::wstring& sub,
+                 bool selected, Icon ic) {
+    bool hov = Hover(r);
+    bool pressed = in.pressed && in.released && r.Contains(in.x, in.y);
+    float s = Ani(id * 17 + 3, selected ? 1.0f : 0.0f, 15.0f);
+    float h = Ani(id * 17 + 4, hov && !selected ? 1.0f : 0.0f, 18.0f);
+
+    const float radius = S(11);
+    Color fill = Mix(Mix(theme::surface, theme::surfaceHi, h * 0.85f),
+                     Mix(theme::A1(), theme::A2(), 0.4f), s * 0.30f);
+    Color bd = Mix(Mix(theme::stroke, theme::strokeHi, h), theme::A1(), s);
+    Color fg = Mix(Mix(theme::textDim, theme::text, h), theme::A1(), s);
+
+    if (s > 0.01f) {
+        float spread = S(4) * s;
+        for (int i = 0; i < 2; ++i) {
+            float t = (float)(i + 1) / 2.0f;
+            float alpha = 30.0f * s * (1.0f - t);
+            if (alpha < 2) continue;
+            R().Fill(Rect(r.x - spread * t, r.y - spread * t * 0.6f, r.w + spread * 2 * t, r.h + spread * 1.2f * t),
+                     Color(theme::A1().r, theme::A1().g, theme::A1().b, (BYTE)alpha));
+        }
+    }
+    R().FillGradV(r, radius, Mix(fill, Color(255, 255, 255, 20), 0.10f), fill);
+    R().Stroke(r, radius, bd, s > 0.5f ? 1.5f : 1.0f);
+
+    // Всё содержимое начинается с одного и того же отступа слева
+    float x0 = r.x + S(kPad);
+    if (ic != Icon::None) {
+        icons::Draw(R(), ic, Rect(x0, r.cy() - S(kIcon) * 0.5f, S(kIcon), S(kIcon)), fg, 1.9f);
+        x0 += S(kIcon) + S(kGap);
+    }
+    if (!label.empty())
+        R().Text(label, fonts::SMALL, 400, fg, Rect(x0, r.y, r.right() - x0, r.h),
+                 Align::Left, VAlign::Middle, false);
+
+    // Размер файла прижат к правому краю на том же отступе, что и слева
+    if (!sub.empty()) {
+        float subW = R().MeasureText(sub, fonts::TINY, 400);
+        R().Text(sub, fonts::TINY, 400,
+                 s > 0.5f ? Mix(theme::textDim, theme::A1(), s) : theme::textMute,
+                 Rect(r.right() - S(kPad) - subW, r.y, subW + S(2), r.h),
+                 Align::Left, VAlign::Middle, false);
+    }
+    return pressed && in.released;
+}
+
 bool Toggle(int id, const Rect& r, bool& on, Icon ic) {
     bool hov = Hover(r);
     float s = Ani(id * 19 + 2, on ? 1.0f : 0.0f, 15.0f);

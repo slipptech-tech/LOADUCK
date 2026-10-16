@@ -288,7 +288,7 @@ void Draw(Renderer& r, Icon id, const RectF& dst, Color c, float weight) {
             break;
         case Icon::Drag:
             for (int i = 0; i < 3; ++i)
-                for (int j = 0; j < 2; ++j) p.Dot(9 + j * 6, 7 + i * 5, 1.3f);
+                for (int j = 0; j < 2; ++j) p.Dot(9.f + j * 6.f, 7.f + i * 5.f, 1.3f);
             break;
         case Icon::Equalizer:
             p.L(6, 4.5f, 6, 19.5f);
@@ -333,6 +333,29 @@ void Draw(Renderer& r, Icon id, const RectF& dst, Color c, float weight) {
             p.L(16, 14, 19.5f, 14);
             p.L(19.5f, 11.5f, 19.5f, 14);
             break;
+        case Icon::Telegram: {
+            // Фирменный знак: бумажный самолётик носом вправо-вверх со сгибом
+            // и килем. Обводка идёт по контуру, поэтому заливки не нужно.
+            p.L(21.2f, 3.2f, 2.6f, 10.4f);        // верхняя кромка крыла
+            p.L(2.6f, 10.4f, 10.2f, 13.2f);      // к переднему углу киля
+            p.L(10.2f, 13.2f, 8.4f, 20.6f);      // киль вниз
+            p.L(8.4f, 20.6f, 12.9f, 14.1f);
+            p.L(12.9f, 14.1f, 18.3f, 13.9f);
+            p.L(18.3f, 13.9f, 21.2f, 3.2f);      // нижняя кромка крыла
+            p.L(10.2f, 13.2f, 18.3f, 13.9f);     // линия сгиба
+            break;
+        }
+        case Icon::Github: {
+            // Знак Octocat в упрощении: круглая голова, треугольные уши
+            // и хвост, уходящий вправо по дуге.
+            p.Arc(12, 12.6f, 7.4f, -18, 336);     // голова со срезом под хвост
+            p.L(6.5f, 7.0f, 5.6f, 2.6f);         // левое ухо
+            p.L(5.6f, 2.6f, 10.0f, 5.4f);
+            p.L(14.0f, 5.4f, 18.4f, 2.6f);       // правое ухо
+            p.L(18.4f, 2.6f, 17.5f, 7.0f);
+            p.Arc(20.4f, 15.4f, 4.2f, -50, 190); // хвост
+            break;
+        }
         case Icon::None:
         default:
             break;

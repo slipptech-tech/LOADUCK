@@ -22,6 +22,8 @@ std::wstring ToLower(const std::wstring& s);
 bool BrowserInstalled(const std::wstring& browser);
 // Первый установленный браузер из списка (пусто, если ни одного).
 std::wstring FirstInstalledBrowser();
+// Запущен ли браузер. Пока он открыт, база кук заблокирована и yt-dlp её не прочитает.
+bool        BrowserRunning(const std::wstring& browser);
 std::wstring ToUpper(const std::wstring& s);
 bool IEquals(const std::wstring& a, const std::wstring& b);
 bool IContains(const std::wstring& hay, const std::wstring& needle);
@@ -57,6 +59,7 @@ std::wstring BinDir();                         // папка с yt-dlp/ffmpeg
 std::wstring FindOnPath(const std::wstring& exeName);
 std::wstring UniquePath(const std::wstring& path);   // (1), (2) ...
 void        RevealInExplorer(const std::wstring& path);
+void        OpenUrl(const wchar_t* url);          // открыть ссылку в браузере по умолчанию
 
 // ── Диалоги / буфер обмена ────────────────────────────────────────────────
 std::wstring SelectFolderDialog(HWND owner, const std::wstring& init);

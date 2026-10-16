@@ -1,6 +1,7 @@
 #include "util.h"
 
 #include <Windows.h>
+#include <TlHelp32.h>
 #include <Shlobj.h>
 #include <Shlwapi.h>
 #include <shellapi.h>
@@ -84,7 +85,36 @@ std::wstring EnvDir(const wchar_t* name) {
     if (n == 0 || n >= MAX_PATH) return {};
     return buf;
 }
+
+// Имя главного процесса браузера. Chromium держит базу кук в эксклюзивном
+// режиме, поэтому запущенный браузер — главная причина «куки не работают».
+const wchar_t* BrowserProcess(const wchar_t* browser) {
+    if (wcscmp(browser, L"chrome") == 0) return L"chrome.exe";
+    if (wcscmp(browser, L"edge") == 0)   return L"msedge.exe";
+    if (wcscmp(browser, L"brave") == 0)  return L"brave.exe";
+    if (wcscmp(browser, L"opera") == 0)  return L"opera.exe";
+    if (wcscmp(browser, L"firefox") == 0) return L"firefox.exe";
+    return nullptr;
+}
 } // namespace
+
+bool BrowserRunning(const std::wstring& browser) {
+    const wchar_t* exe = BrowserProcess(ToLower(Trim(browser)).c_str());
+    if (!exe) return false;
+
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof(pe);
+    bool found = false;
+    if (Process32FirstW(snap, &pe)) {
+        do {
+            if (_wcsicmp(pe.szExeFile, exe) == 0) { found = true; break; }
+        } while (Process32NextW(snap, &pe));
+    }
+    CloseHandle(snap);
+    return found;
+}
 
 bool BrowserInstalled(const std::wstring& browser) {
     std::wstring b = ToLower(Trim(browser));
@@ -369,6 +399,15 @@ void RevealInExplorer(const std::wstring& path) {
     std::wstring arg = L"/select,\"" + path + L"\"";
     if (!FileExists(path)) arg = L"\"" + dir + L"\"";
     ShellExecuteW(nullptr, L"open", L"explorer.exe", arg.c_str(), nullptr, SW_SHOWNORMAL);
+}
+
+void OpenUrl(const wchar_t* url) {
+    if (!url || !*url) return;
+    // Показываем курсор, пока система открывает ссылку — иначе на быстром ПК
+    // приложение кажется «зависшим».
+    HCURSOR old = SetCursor(LoadCursorW(nullptr, IDC_HAND));
+    ShellExecuteW(nullptr, L"open", url, nullptr, nullptr, SW_SHOWNORMAL);
+    SetCursor(old);
 }
 
 // ── Диалоги ───────────────────────────────────────────────────────────────

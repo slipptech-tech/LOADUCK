@@ -177,6 +177,19 @@ void DrawTitleBar(AppState& a, const RectF& r) {
 
 // ── Боковая панель ────────────────────────────────────────────────────────
 
+namespace {
+// Ссылка, выбранная кликом. Открывается вызывающим кодом после отрисовки
+// кадра — из DrawFrame запускать ShellExecute нельзя.
+std::wstring g_pendingUrl;
+} // namespace
+
+bool TakePendingUrl(std::wstring& out) {
+    if (g_pendingUrl.empty()) return false;
+    out = std::move(g_pendingUrl);
+    g_pendingUrl.clear();
+    return true;
+}
+
 void DrawSidebar(AppState& a, const RectF& r) {
     a.sidebarRect = r;
     R().FillGradV(r, 0, Color(14, 18, 27), Color(11, 15, 22));
@@ -217,7 +230,7 @@ void DrawSidebar(AppState& a, const RectF& r) {
 
         Color fg = Mix(Mix(theme::textDim, theme::text, hovA), theme::A1(), selA);
         icons::Draw(R(), items[i].ic, RectF(ir.x + S(14), ir.cy() - S(10), S(20), S(20)), fg, 1.9f);
-        R().Text(items[i].label, fonts::BODY, sel ? 600 : 400, fg,
+        R().Text(items[i].label, fonts::BODY, sel ? 600.f : 400.f, fg,
                  RectF(ir.x + S(45), ir.y, ir.w - S(86), h), Align::Left, VAlign::Middle, false);
 
         int badge = items[i].badge;
@@ -247,6 +260,36 @@ void DrawSidebar(AppState& a, const RectF& r) {
              RectF(folder.x + S(14), folder.y + S(38), folder.w - S(28), S(28)), Align::Left, VAlign::Middle, true);
     if (ui::in.pressed && folder.Contains(ui::in.x, ui::in.y) && ui::in.released)
         util::RevealInExplorer(a.store.Get().downloadDir);
+
+    // ── Ссылки на проект ────────────────────────────────────────────────
+    // Стоят сразу под папкой загрузок и выше блока компонентов.
+    {
+        const float lw = S(36);
+        const float ly = folder.bottom() + S(18);
+        struct Link { Icon ic; const wchar_t* tip; const wchar_t* url; Color c; };
+        const Link links[2] = {
+            { Icon::Telegram, TR(L"Telegram — написать автору"), L"https://t.me/LOADUCK",
+              Color::Rgb(42, 171, 238) },
+            { Icon::Github,   TR(L"Исходный код на GitHub"),   L"https://github.com/slipptech-tech/LOADUCK",
+              Color(255, 255, 255, 225) },
+        };
+        for (int i = 0; i < 2; ++i) {
+            RectF br(folder.x + S(2) + lw * i, ly, lw, lw);
+            bool hov = ui::Hover(br);
+            float ha = ui::Ani(770 + i, hov ? 1.f : 0.f, 16.f);
+            if (ha > 0.01f) {
+                R().FillRound(br, S(11), Color(255, 255, 255, (BYTE)(16 * ha)));
+                R().Stroke(br, S(11), Color(255, 255, 255, (BYTE)(34 * ha)), 1.f);
+            }
+            // Значки узнаются по фирменным цветам, поэтому рисуем их брендовыми,
+            // а не серым, как остальные элементы сайдбара.
+            icons::Draw(R(), links[i].ic, br, Mix(links[i].c, Color(255, 255, 255, 255), ha * 0.35f), 2.1f);
+            ui::SetTooltip(br, links[i].tip);
+            // Только запоминаем ссылку — открываем её после отрисовки кадра
+            if (ui::in.pressed && br.Contains(ui::in.x, ui::in.y) && ui::in.released)
+                g_pendingUrl = links[i].url;
+        }
+    }
 
     // статус компонентов
     RectF status(r.x + pad, r.bottom() - S(80), r.w - pad * 2, S(62));
@@ -372,8 +415,18 @@ static void DrawError(AppState& a, const RectF& r) {
     icons::Draw(R(), Icon::Error, RectF(x, r.y + S(24), S(24), S(24)), theme::danger, 2.0f);
     R().Text(TR(L"Не удалось получить видео"), fonts::H2, 600, theme::text,
              RectF(x + S(36), r.y + S(20), r.w - S(80), S(28)), Align::Left, VAlign::Middle, false);
+    // Высота текста ошибки считается по объёму сообщения: к некоторым ошибкам
+// добавляется многострочная подсказка про куки, и обрезать её нельзя —
+// иначе пользователь не поймёт, что делать.
+    float lines = 2.f;
+    for (size_t i = 0; i < a.probeError.size(); ++i)
+        if (a.probeError[i] == L'\n') lines += 1.f;
+    if (R().MeasureText(a.probeError, fonts::SMALL, 400) > (r.w - S(84)) * 1.02f)
+        lines += 1.f;                       // текст не влезет в одну строку
+    lines = std::min(lines, 7.f);
     R().Text(a.probeError, fonts::SMALL, 400, theme::textDim,
-             RectF(x + S(36), r.y + S(52), r.w - S(84), S(44)), Align::Left, VAlign::Top, true);
+             RectF(x + S(36), r.y + S(52), r.w - S(84), lines * S(19) + S(4)),
+             Align::Left, VAlign::Top, true);
 
     float by = r.bottom() - S(62);
     if (ui::Button(1201, RectF(x + S(36), by, S(156), S(42)), TR(L"Повторить"), Icon::Refresh, ui::Btn::Secondary))
@@ -390,7 +443,11 @@ static float MediaCardHeight(const MediaInfo& info, float width) {
     float perRow = std::max(1.0f, std::floor((chipsW + S(8)) / S(150)));
     int n = 2 + (int)info.heights.size();
     int rows = (int)std::ceil((float)n / perRow);
-    return S(328) + rows * S(40);
+    // Подсказка про H.264/1080p рисуется, только если в ролике есть что-то выше 1080
+    int maxH = 0;
+    for (int h : info.heights) maxH = std::max(maxH, h);
+    float hint = (info.hasH264 && maxH > 1080) ? S(22) : 0.f;
+    return S(328) + rows * S(40) + hint;
 }
 
 static void DrawMediaCard(AppState& a, const RectF& r) {
@@ -512,10 +569,25 @@ static void DrawMediaCard(AppState& a, const RectF& r) {
     }
     cy += gfx::S(28);
 
+    // Подсказка под переключателем: без неё кажется, будто 4K недоступен
+    // из-за режима совместимости.
+    if (info.hasH264) {
+        int maxH = 0;
+        for (int h : info.heights) maxH = std::max(maxH, h);
+        if (maxH > 1080) {
+            R().Text(TR(L"H.264 — до 1080p; выше нужен VP9/AV1"), fonts::TINY, 400, theme::textMute,
+                     RectF(x, cy, gfx::S(460), gfx::S(16)),
+                     Align::Left, VAlign::Middle, true);
+            cy += gfx::S(22);
+        }
+    }
+
     std::vector<std::wstring> qualities;
     qualities.push_back(L"best");
-    const std::vector<int>& hset = compat && !info.heightsH264.empty() ? info.heightsH264 : info.heights;
-    for (int h : hset) qualities.push_back(std::to_wstring(h));
+    // Показываем все разрешения ролика, а не только те, что есть в H.264:
+    // 4K на YouTube существует лишь в VP9/AV1, и прятать его из списка
+    // означало бы запретить пользователю выбрать высокое качество.
+    for (int h : info.heights) qualities.push_back(std::to_wstring(h));
     qualities.push_back(L"audio");
 
     Flow flow;
@@ -524,25 +596,35 @@ static void DrawMediaCard(AppState& a, const RectF& r) {
         const std::wstring& q = qualities[i];
         std::wstring label = (q == L"best") ? TR(L"Максимум") : (q == L"audio" ? TR(L"Только аудио") : q + L"p");
         bool sel = (a.exactFormat.empty() && a.quality == q);
-        uint64_t sz = EstimateSize(info, q, q == L"audio", compat && q != L"audio");
+        // Совместимость по кодеку действует только там, где H.264 вообще бывает (≤1080)
+        bool qCompat = compat && q != L"audio" && (q == L"best" || _wtoi(q.c_str()) <= 1080);
+        uint64_t sz = EstimateSize(info, q, q == L"audio", qCompat);
         std::wstring sub = sz ? (L"~" + util::FormatBytes(sz)) : L"";
 
-        float subW = sub.empty() ? 0.f : R().MeasureText(sub, fonts::TINY, 400);
-        float w = R().MeasureText(label, fonts::SMALL, 600) + gfx::S(46) + subW + gfx::S(32);
+        Icon ic = (q == L"audio") ? Icon::Music : (q == L"best" ? Icon::Sparkles : Icon::Video);
+        float w = ui::ChipWithSubWidth(label, sub, ic);
         RectF cr = flow.Take(w, gfx::S(40));
 
-        Icon ic = (q == L"audio") ? Icon::Music : (q == L"best" ? Icon::Sparkles : Icon::Video);
-        if (ui::Chip(1400 + (int)i, cr, label, sel, ic)) {
+        if (ui::ChipWithSub(1400 + (int)i, cr, label, sub, sel, ic)) {
+            // Выбрали разрешение выше 1080 — H.264 там не существует, поэтому
+            // режим совместимости молча отключаем, иначе обещание не выполнимо.
+            if (q != L"best" && q != L"audio" && _wtoi(q.c_str()) > 1080 && a.preferH264) {
+                a.preferH264 = false;
+                a.store.Get().preferH264 = false;
+                a.store.Save();
+                a.exactFormat.clear();
+                a.exactFormatLabel.clear();
+                toast::Show(TR(L"H.264 бывает только до 1080p — для этого качества нужен VP9/AV1"),
+                            toast::Kind::Info, 5.0f);
+                toast::Show(TR(L"4K доступно только в VP9/AV1 — штатный плеер Windows может его не открыть"),
+                            toast::Kind::Warn, 5.0f);
+            }
             a.quality = q;
             a.exactFormat.clear();
             a.exactFormatLabel.clear();
             a.audioOnly = (q == L"audio");
             a.store.Get().defaultQuality = q;
         }
-        if (!sub.empty())
-            R().Text(sub, fonts::TINY, 400, sel ? theme::A1() : theme::textMute,
-                     RectF(cr.right() - subW - gfx::S(15), cr.y, subW + gfx::S(4), cr.h),
-                     Align::Right, VAlign::Middle, false);
     }
     cy = flow.Bottom() + gfx::S(18);
 
@@ -692,14 +774,20 @@ static void DrawAdvanced(AppState& a, const RectF& r) {
     R().Text(TR(L"Куки из браузера"), fonts::BODY, 400, theme::text,
              RectF(cx, y, colW - gfx::S(60), gfx::S(24)), Align::Left, VAlign::Middle, false);
     // Куки из браузера. Важно: ui::Toggle уже переключает значение — второй раз
-// переворачивать нельзя, иначе флаг всегда возвращался обратно.
+    // переворачивать нельзя, иначе флаг всегда возвращался обратно.
     bool cb = st.cookiesFromBrowser;
     if (ui::Toggle(1702, RectF(cx + colW - gfx::S(52), y - gfx::S(2), gfx::S(52), gfx::S(30)),
                    st.cookiesFromBrowser, Icon::Cookie) && cb != st.cookiesFromBrowser) {
         a.store.Save();
-        if (st.cookiesFromBrowser)
-            toast::Show(TR(L"Куки будут взяты из выбранного браузера. Закройте его перед скачиванием"),
-                        toast::Kind::Info, 4.5f);
+        // Предупреждаем сразу: пока браузер открыт, его база кук заблокирована
+        // и прочитать её невозможно. Иначе куки выглядят включёнными, но не работают.
+        if (st.cookiesFromBrowser) {
+            if (util::BrowserRunning(st.cookiesBrowser))
+                toast::Show(TR(L"Браузер запущен — закройте его, иначе куки не прочитаются"),
+                            toast::Kind::Warn, 6.0f);
+            else
+                toast::Show(TR(L"Куки будут взяты из выбранного браузера"), toast::Kind::Info, 3.5f);
+        }
     }
 
     Flow bf;
@@ -714,10 +802,17 @@ static void DrawAdvanced(AppState& a, const RectF& r) {
         if (ui::Chip(1710 + i, bf.Take(w, gfx::S(32)), b, util::ToLower(st.cookiesBrowser) == b)) {
             st.cookiesBrowser = b;
             a.store.Save();
+            if (util::BrowserRunning(b))
+                toast::Show(TR(L"Браузер запущен — закройте его, иначе куки не прочитаются"),
+                            toast::Kind::Warn, 6.0f);
         }
     }
     if (found.empty())
         R().Text(TR(L"Браузер не найден — куки отключены"), fonts::TINY, 400, theme::textMute,
+                 RectF(cx, y + gfx::S(72), colW, gfx::S(18)), Align::Left, VAlign::Middle, true);
+    else if (st.cookiesFromBrowser && util::BrowserRunning(st.cookiesBrowser))
+        // Пометка висит постоянно, пока браузер открыт: куки сейчас не сработают
+        R().Text(TR(L"Браузер запущен — закройте его"), fonts::TINY, 400, theme::warning,
                  RectF(cx, y + gfx::S(72), colW, gfx::S(18)), Align::Left, VAlign::Middle, true);
 
     // список форматов
@@ -845,11 +940,23 @@ static void DrawHome(AppState& a, const RectF& clip) {
     float advH = gfx::S(480);
     float advAnim = ui::Ani(1910, a.advancedOpen ? 1.0f : 0.0f, 13.0f);
 
-    float contentH = urlH + gfx::S(22);
-    if (a.probing) contentH += gfx::S(200) + gfx::S(22);
-    else if (!a.probeError.empty()) contentH += gfx::S(190) + gfx::S(22);
-    else if (a.info.ok()) contentH += mediaH + gfx::S(22) + gfx::S(318) + gfx::S(22) + advH * advAnim + gfx::S(22) + gfx::S(100);
-    else contentH += gfx::S(184);
+    // Высота содержимого считается теми же величинами и в том же порядке, что и
+    // сама вёрстка ниже. Раньше сумма велась отдельно и со временем разошлась с
+    // реальными блоками — нижние элементы просто не доезжали до конца прокрутки.
+    const float gap = gfx::S(22);
+    float contentH = urlH + gap;
+    if (a.probing) {
+        contentH += gfx::S(200) + gap;
+    } else if (!a.probeError.empty()) {
+        contentH += gfx::S(238) + gap;
+    } else if (a.info.ok()) {
+        contentH += mediaH + gap;
+        contentH += gfx::S(318);
+        if (advAnim > 0.01f) contentH += advH * advAnim + gap;
+        contentH += gfx::S(112);
+    } else {
+        contentH += gfx::S(184);
+    }
 
     ui::ScrollArea(1900, inner, a.scrollHome, contentH, [&](const RectF& content) {
         float y = content.y;
@@ -860,8 +967,8 @@ static void DrawHome(AppState& a, const RectF& clip) {
             DrawProbing(a, RectF(content.x, y, content.w, gfx::S(178)));
             y += gfx::S(200);
         } else if (!a.probeError.empty()) {
-            DrawError(a, RectF(content.x, y, content.w, gfx::S(168)));
-            y += gfx::S(190);
+            DrawError(a, RectF(content.x, y, content.w, gfx::S(216)));
+            y += gfx::S(238);
         } else if (a.info.ok()) {
             DrawMediaCard(a, RectF(content.x, y, content.w, mediaH));
             y += mediaH + gfx::S(22);
@@ -1259,7 +1366,7 @@ float contentH = gfx::S(1348);
 
             auto& dl = (i == 0) ? a.dlYtdlp : a.dlFfmpeg;
             if (dl && dl->running) {
-                float p = dl->total ? (double)dl->received / (double)dl->total : 0.0;
+                float p = dl->total ? (float)((double)dl->received / (double)dl->total) : 0.0f;
                 ui::Progress(RectF(cr.x + gfx::S(38), cr.y + gfx::S(44), cr.w - gfx::S(52), gfx::S(4)),
                              (float)p, theme::A1(), theme::A2(), 1.0f);
             }

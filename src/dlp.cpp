@@ -182,6 +182,27 @@ int PumpAndWait(Proc& proc, const std::function<void(const std::string&)>& onLin
 
 } // namespace
 
+// YouTube отдаёт невнятную ошибку «Sign in to confirm you're not a bot», из-за
+// которой непонятно, что делать. Превращаем её в конкретную подсказку.
+static void AppendCookieHint(std::wstring& err, bool cookiesEnabled) {
+    std::string low = util::WideToUtf8(err);
+    std::transform(low.begin(), low.end(), low.begin(),
+                   [](unsigned char c) { return (char)tolower(c); });
+
+    const bool botCheck = low.find("not a bot") != std::string::npos ||
+                          low.find("confirm you") != std::string::npos;
+    const bool cookieProblem = low.find("cookies") != std::string::npos;
+
+    if (!botCheck && !cookieProblem) return;
+
+    err += L"\n\n";
+    if (cookiesEnabled)
+        err += L"Куки не помогли: закройте браузер и повторите — пока он открыт, его база с куками заблокирована.";
+    else
+        err += L"Откройте «Настройки» → «Использовать куки браузера» и закройте браузер.";
+    err += L" YouTube просит подтверждение входа при слишком частых запросах с одного адреса.";
+}
+
 // ── Job ───────────────────────────────────────────────────────────────────
 
 Job::Job(JobOptions opt) : opt_(std::move(opt)) {
@@ -386,6 +407,7 @@ void Job::Run() {
             state_ = JobState::Failed;
             prog_.stage = L"Ошибка";
             error_ = warn;
+            AppendCookieHint(error_, withCookies);
             if (error_.size() > 700) error_ = error_.substr(error_.size() - 700);
         }
         if (error_.empty()) error_ = L"yt-dlp завершился с кодом " + std::to_wstring(code);
@@ -517,6 +539,7 @@ bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err,
         if (pos != std::string::npos) tail = tail.substr(pos);
         if (tail.empty()) tail = "yt-dlp не смог обработать ссылку (код " + std::to_string(code) + ")";
         err = util::Utf8ToWide(tail.substr(0, 600));
+        AppendCookieHint(err, useCookies);
         return false;
     }
 
@@ -820,7 +843,15 @@ std::string FormatSelector(const std::wstring& quality, const std::wstring& cont
 
     // Совместимый режим: H.264 + AAC — такой файл открывает любой системный плеер.
     // Без него «Максимум» уводит в AV1/VP9, которые штатный плеер Windows не декодирует.
-    if (preferH264) {
+    //
+    // Важный нюанс: YouTube отдаёт H.264 только до 1080p, 4K существует исключительно
+    // в VP9/AV1. Поэтому при запросе выше 1080 ограничение по кодеку снимается —
+    // иначе 4K был бы недостижим в принципе, и это молчало бы о том, что выбор
+    // качества ничего не решает.
+    const int wantH = (q == "best" || q.empty()) ? 0 : atoi(q.c_str());
+    const bool forceH264 = preferH264 && wantH <= 1080;
+
+    if (forceH264) {
         std::string v = "bestvideo" + h + "[ext=mp4][vcodec~='^(avc|h264)']";
         if (c == "mp4" || c == "auto" || c.empty())
             return v + "+bestaudio[ext=m4a]/" + v + "+bestaudio/best" + h + "/best" + h + "[ext=mp4]/best" + h;
@@ -830,8 +861,15 @@ std::string FormatSelector(const std::wstring& quality, const std::wstring& cont
     if (c == "auto" || c.empty())
         return h.empty() ? std::string("bestvideo*+bestaudio/best")
                          : "bestvideo*" + h + "+bestaudio/best" + h + "/best" + h + "/best";
-    if (c == "mp4")
+    if (c == "mp4") {
+        // Выше 1080p в MP4 YouTube отдаёт только AV1: VP9 лежит в webm, поэтому
+        // обычный запрос [ext=mp4] просто не нашёл бы 4K и молча упал бы в 1080p.
+        if (wantH > 1080) {
+            std::string av = "bestvideo" + h + "[ext=mp4][vcodec~='^(av01|av1)']";
+            return av + "+bestaudio[ext=m4a]/" + av + "+bestaudio/best" + h + "/best" + h;
+        }
         return "bestvideo" + h + "[ext=mp4]+bestaudio[ext=m4a]/bestvideo" + h + "[ext=mp4]+bestaudio/best" + h + "/best" + h;
+    }
     if (c == "webm")
         return "bestvideo" + h + "[ext=webm]+bestaudio[ext=webm]/bestvideo" + h + "[ext=webm]+bestaudio/best" + h + "/best" + h;
     // mkv и прочие контейнеры

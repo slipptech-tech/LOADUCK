@@ -219,12 +219,23 @@ static void ApplyProbeResults(AppState& a) {
         a.preferH264 = st.preferH264;
         a.h264Available = a.info.hasH264;
         if (a.preferH264 && !a.info.hasH264) a.preferH264 = false;
-        // В совместимом режиме нельзя выбрать разрешение, которого нет в H.264
-        if (a.preferH264 && a.quality != L"best" && a.quality != L"audio") {
-            bool allowed = false;
-            for (int h : a.info.heightsH264)
-                if (std::to_wstring(h) == a.quality) { allowed = true; break; }
-            if (!allowed) a.quality = L"best";
+        // Приводим качество к тому, что реально есть в ролике. Разрешения выше 1080
+        // в H.264 не бывает, поэтому для них совместимость снимается, а не сбрасывается
+        // выбор на «Максимум» — иначе 4K был бы недостижим из интерфейса.
+        if (a.quality != L"best" && a.quality != L"audio") {
+            const int qh = _wtoi(a.quality.c_str());
+            bool any = false, inH264 = false;
+            for (int h : a.info.heights) if (h == qh) { any = true; break; }
+            for (int h : a.info.heightsH264) if (h == qh) { inH264 = true; break; }
+            if (!any) {
+                a.quality = L"best";
+            } else if (a.preferH264 && qh > 1080) {
+                a.preferH264 = false;
+                a.store.Get().preferH264 = false;
+                a.store.Save();
+            } else if (a.preferH264 && !inH264) {
+                a.quality = L"best";
+            }
         }
         a.scrollHome = 0;
         toast::Show(TR(L"Ссылка проанализирована"), toast::Kind::Success, 2.4f);
@@ -475,6 +486,11 @@ static void OnPaint(AppState& a, HWND hwnd) {
         EndPaint(hwnd, &ps);
     }
     ResetInputFrame();
+    // Ссылки открываем здесь, а не из DrawFrame: ShellExecute внутри WM_PAINT
+    // запускает вложенный цикл сообщений, и клик срабатывает многократно.
+    std::wstring url;
+    if (pages::TakePendingUrl(url))
+        util::OpenUrl(url.c_str());
 }
 
 // ── Тик ───────────────────────────────────────────────────────────────────
