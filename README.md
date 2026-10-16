@@ -43,11 +43,6 @@ Features a dark UI, video previews, quality selection, download queue, and histo
 
 Both components are included in the `bin` directory. If either is missing, open **Settings → Components** and click **Update**.
 
-## WARNING
-
-For LOADUCK to work, you need the bin folder that's in the releases. 
-Download it, unpack it, and put this folder inside where you downloaded LOADUCK.
-
 ## Building
 
 ```bat
