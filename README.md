@@ -4,7 +4,7 @@ A native Windows application (C++ / Win32) for downloading videos from YouTube, 
 
 Features a dark UI, video previews, quality selection, download queue, and history.
 
-![Interface](assets/screenshot.png)
+![Interface](assets/screenshott.png)
 
 ## Features
 
