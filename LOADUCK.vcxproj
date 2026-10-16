@@ -78,6 +78,7 @@
     <ClCompile Include="src\theme.cpp" />
     <ClCompile Include="src\gfx.cpp" />
     <ClCompile Include="src\icons.cpp" />
+      <ClCompile Include="src\lang.cpp" />
     <ClCompile Include="src\ui.cpp" />
     <ClCompile Include="src\store.cpp" />
     <ClCompile Include="src\dlp.cpp" />
@@ -92,6 +93,7 @@
     <ClInclude Include="src\theme.h" />
     <ClInclude Include="src\gfx.h" />
     <ClInclude Include="src\icons.h" />
+    <ClInclude Include="src\lang.h" />
     <ClInclude Include="src\ui.h" />
     <ClInclude Include="src\store.h" />
     <ClInclude Include="src\dlp.h" />
