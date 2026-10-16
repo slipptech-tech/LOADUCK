@@ -23,84 +23,104 @@ void ImagePut(const std::wstring& key, std::vector<uint8_t>&& bytes) {
 
 void ImageTrim() { ImageCache::Trim(12); }
 
-// ── Фоновые блики ─────────────────────────────────────────────────────────
+// ── Фон ────────────────────────────────────────────────────────────────────
 
-// Блики рисуются в маленький offscreen-буфер и кэшируются: пересчёт ~8 раз в секунду
-// вместо 60. Иначе 66 заливок эллипсов на каждый кадр съедают всё время CPU.
+// Фон рисуем сами, попиксельно, прямо в буфер кадра. GDI+ здесь давал артефакты
+// (пятна выходили зелёными, а слои давали концентрические кольца), а своя
+// математика даёт идеально гладкий градиент и стоит копейки: считается один раз
+// на тему/размер окна и дальше просто копируется.
 namespace {
-struct GlowCache {
-    Gdiplus::Bitmap* bmp = nullptr;
+struct BgCache {
     int w = 0, h = 0;
-    double stamp = -1e9;
-    Color color{};
-    bool colorSet = false;
+    Color top{}, bottom{};
+    Color blobs[3]{};
+    bool valid = false;
+    std::vector<BYTE> buf;      // готовый фон, каждый кадр копируется одним memcpy
 };
-GlowCache g_glow;
+BgCache g_bg;
+
+inline BYTE Blend(BYTE dst, BYTE src, int a) {   // a в диапазоне 0..255
+    return (BYTE)((dst * (255 - a) + src * a + 127) / 255);
+}
 } // namespace
 
-void ClearGlowCache() {
-    if (g_glow.bmp) delete g_glow.bmp;
-    g_glow.bmp = nullptr;
-    g_glow.w = g_glow.h = 0;
-    g_glow.stamp = -1e9;
-    g_glow.colorSet = false;
-}
+void ClearGlowCache() { g_bg.valid = false; g_bg.buf.clear(); }
 
-void DrawGlowLayer(Renderer& r, const std::vector<Blob>& blobs, const RectF& area) {
-    if (blobs.empty() || area.w <= 0 || area.h <= 0) return;
+void PaintBackground(const RectF& area, Color top, Color bottom,
+                     const std::vector<Blob>& blobs) {
+    void* bits = GR().BackbufferBits();
+    int W = GR().Width(), H = GR().Height();
+    if (!bits || W <= 0 || H <= 0 || area.w <= 0 || area.h <= 0) return;
 
-    constexpr int GW = 300, GH = 180;
-    const double now = ui::time;
-    bool stale = (now - g_glow.stamp) > 0.11;
-
-    if (!g_glow.colorSet || g_glow.color.r != blobs[0].color.r || g_glow.color.g != blobs[0].color.g ||
-        g_glow.color.b != blobs[0].color.b) {
-        stale = true;
-        g_glow.color = blobs[0].color;
-        g_glow.colorSet = true;
+    bool same = g_bg.valid && g_bg.w == W && g_bg.h == H &&
+                g_bg.top.r == top.r && g_bg.top.g == top.g && g_bg.top.b == top.b &&
+                g_bg.bottom.r == bottom.r && g_bg.bottom.g == bottom.g && g_bg.bottom.b == bottom.b;
+    for (int i = 0; same && i < 3; ++i) {
+        Color c = (i < (int)blobs.size()) ? blobs[i].color : Color(0, 0, 0, 0);
+        same = g_bg.blobs[i].r == c.r && g_bg.blobs[i].g == c.g && g_bg.blobs[i].b == c.b;
     }
 
-    if (!g_glow.bmp || g_glow.w != GW || g_glow.h != GH) {
-        ClearGlowCache();
-        g_glow.colorSet = true;
-        g_glow.color = blobs[0].color;
-        g_glow.bmp = new Gdiplus::Bitmap(GW, GH, PixelFormat32bppPARGB);
-        if (!g_glow.bmp || g_glow.bmp->GetLastStatus() != Gdiplus::Ok) {
-            ClearGlowCache();
-            return;
-        }
-        g_glow.w = GW;
-        g_glow.h = GH;
-        stale = true;
-    }
+    if (!same) {
+        g_bg.buf.assign((size_t)W * H * 4, 0);
+        g_bg.w = W;
+        g_bg.h = H;
+        g_bg.top = top;
+        g_bg.bottom = bottom;
+        for (int i = 0; i < 3; ++i)
+            g_bg.blobs[i] = (i < (int)blobs.size()) ? blobs[i].color : Color(0, 0, 0, 0);
+        g_bg.valid = true;
 
-    if (stale) {
-        Gdiplus::Graphics g(g_glow.bmp);
-        g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-        g.SetCompositingQuality(Gdiplus::CompositingQualityHighSpeed);
-        g.Clear(Gdiplus::Color(0, 0, 0, 0));
-        const int layers = 22;
-        for (const Blob& b : blobs) {
-            if (b.intensity <= 0.5f) continue;
-            float cx = b.x * GW, cy = b.y * GH;
-            float rx = b.radius * GW * 0.72f;
-            float ry = rx * b.squash;
-            if (rx < 4.f) continue;
-            for (int i = layers; i >= 1; --i) {
-                float t = (float)i / layers;
-                float a = b.intensity * (1.f - t) * (1.f - t) * 0.5f;
-                if (a < 0.6f) continue;
-                BYTE alpha = (BYTE)std::clamp(a, 0.f, 255.f);
-                Gdiplus::SolidBrush br(Gdiplus::Color(b.color.r, b.color.g, b.color.b, alpha));
-                float ex = rx * t, ey = ry * t;
-                g.FillEllipse(&br, cx - ex, cy - ey, ex * 2, ey * 2);
+        BYTE* px = g_bg.buf.data();
+        const int stride = W * 4;
+
+        // 1) вертикальный градиент
+        for (int y = 0; y < H; ++y) {
+            int t = (H > 1) ? (y * 255) / (H - 1) : 0;
+            BYTE rr = (BYTE)((top.r * (255 - t) + bottom.r * t) / 255);
+            BYTE gg = (BYTE)((top.g * (255 - t) + bottom.g * t) / 255);
+            BYTE bb = (BYTE)((top.b * (255 - t) + bottom.b * t) / 255);
+            BYTE* row = px + (size_t)y * stride;
+            for (int x = 0; x < W; ++x) {
+                row[x * 4 + 0] = bb;
+                row[x * 4 + 1] = gg;
+                row[x * 4 + 2] = rr;
+                row[x * 4 + 3] = 255;
             }
         }
-        g.Flush(Gdiplus::FlushIntentionSync);
-        g_glow.stamp = now;
+
+        // 2) мягкие пятна: вклад (1 - d)^2, конверт — только по своему прямоугольнику
+        for (const Blob& b : blobs) {
+            if (b.intensity <= 0.1f) continue;
+            float cx = b.x * W, cy = b.y * H;
+            float rx = b.radius * W * 0.80f;
+            float ry = rx * b.squash;
+            if (rx < 2.f || ry < 2.f) continue;
+
+            int x0 = std::max(0, (int)(cx - rx)), x1 = std::min(W - 1, (int)(cx + rx));
+            int y0 = std::max(0, (int)(cy - ry)), y1 = std::min(H - 1, (int)(cy + ry));
+            float invRx = 1.f / rx, invRy = 1.f / ry;
+
+            for (int y = y0; y <= y1; ++y) {
+                float dy = ((float)y + 0.5f - cy) * invRy;
+                BYTE* row = px + (size_t)y * stride;
+                for (int x = x0; x <= x1; ++x) {
+                    float dx = ((float)x + 0.5f - cx) * invRx;
+                    float d2 = dx * dx + dy * dy;
+                    if (d2 >= 1.0f) continue;
+                    float k = 1.0f - std::sqrt(d2);
+                    k *= k;                       // плавное затухание к краю
+                    int a = (int)(k * b.intensity + 0.5f);
+                    if (a <= 0) continue;
+                    if (a > 255) a = 255;
+                    row[x * 4 + 0] = Blend(row[x * 4 + 0], b.color.b, a);
+                    row[x * 4 + 1] = Blend(row[x * 4 + 1], b.color.g, a);
+                    row[x * 4 + 2] = Blend(row[x * 4 + 2], b.color.r, a);
+                }
+            }
+        }
     }
 
-    r.DrawBitmapExternal(g_glow.bmp, area);
+    memcpy(bits, g_bg.buf.data(), (size_t)W * H * 4);
 }
 
 // ── Инициализация ─────────────────────────────────────────────────────────

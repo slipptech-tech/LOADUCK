@@ -244,6 +244,12 @@ struct Renderer::Impl {
     G::Bitmap* bmp = nullptr;
     G::Graphics* g = nullptr;
     int pw = 0, ph = 0;
+    // Тот же буфер с точки зрения GDI: DIB-секция + memory DC.
+    // Позволяет выводить кадр через BitBlt — на порядок быстрее GDI+ DrawImage.
+    HBITMAP dib = nullptr;
+    HDC memDC = nullptr;
+    HGDIOBJ oldBmp = nullptr;
+    void* bits = nullptr;
 
     std::vector<RectF> clips;
     std::vector<float> layers;
@@ -263,18 +269,51 @@ struct Renderer::Impl {
 bool Renderer::Impl::Ensure(int w, int h) {
     if (bmp && w == pw && h == ph) return g != nullptr;
     Destroy();
-    G::Bitmap* b = new G::Bitmap((INT)w, (INT)h, PixelFormat32bppPARGB);
-    if (!b || b->GetLastStatus() != G::Ok) {
-        if (b) delete b;
-        return false;
+
+    // 1) DIB-секция 32bpp (top-down) — её можно и рисовать через GDI+, и копировать BitBlt
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;      // отрицательная высота = top-down
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+
+    HDC screen = GetDC(nullptr);
+    dib = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (screen) ReleaseDC(nullptr, screen);
+    if (!dib || !bits) {
+        if (dib) DeleteObject(dib);
+        dib = nullptr;
+        bits = nullptr;
     }
-    G::Graphics* gr = new G::Graphics(b);
+
+    if (dib && bits) {
+        bmp = new G::Bitmap(w, h, w * 4, PixelFormat32bppPARGB, (BYTE*)bits);
+        if (!bmp || bmp->GetLastStatus() != G::Ok) {
+            delete bmp;
+            bmp = nullptr;
+        }
+        memDC = CreateCompatibleDC(nullptr);
+        if (memDC) oldBmp = SelectObject(memDC, dib);
+    }
+
+    if (!bmp) {
+        // Запасной путь — обычный буфер GDI+
+        G::Bitmap* b = new G::Bitmap((INT)w, (INT)h, PixelFormat32bppPARGB);
+        if (!b || b->GetLastStatus() != G::Ok) {
+            if (b) delete b;
+            return false;
+        }
+        bmp = b;
+    }
+
+    G::Graphics* gr = new G::Graphics(bmp);
     if (!gr || gr->GetLastStatus() != G::Ok) {
         if (gr) delete gr;
-        delete b;
+        Destroy();
         return false;
     }
-    bmp = b;
     g = gr;
     pw = w;
     ph = h;
@@ -290,8 +329,19 @@ void Renderer::Impl::Destroy() {
     layers.clear();
     delete g;
     g = nullptr;
-    delete bmp;
+    delete bmp;          // GDI+ не владеет битами — DIB остаётся валидным
     bmp = nullptr;
+    if (memDC) {
+        if (oldBmp) SelectObject(memDC, oldBmp);
+        DeleteDC(memDC);
+        memDC = nullptr;
+        oldBmp = nullptr;
+    }
+    if (dib) {
+        DeleteObject(dib);
+        dib = nullptr;
+    }
+    bits = nullptr;
     pw = ph = 0;
 }
 
@@ -386,6 +436,7 @@ void Renderer::Shutdown() {
 
 void* Renderer::NativeGraphics() const { return impl_ ? (void*)impl_->g : nullptr; }
 void Renderer::SetNativeGraphics(void* g) { if (impl_) impl_->g = (G::Graphics*)g; }
+void* Renderer::BackbufferBits() const { return impl_ ? impl_->bits : nullptr; }
 
 bool Renderer::DrawBitmapExternal(void* bmp, const RectF& dst) {
     if (!impl_ || !impl_->g || !bmp || dst.w <= 0 || dst.h <= 0) return false;
@@ -419,8 +470,11 @@ void Renderer::End() {
 
 void Renderer::PresentTo(HDC hdc) {
     if (!hdc || !impl_ || !impl_->bmp || w_ <= 0 || h_ <= 0) return;
-    // Копируем готовый буфер на экран. Для картинок (превью, логотип) качество
-    // повышается отдельно, здесь важен только быстрый 1:1-блит.
+    // Основной путь — BitBlt из DIB-секции: простое копирование пикселей.
+    if (impl_->memDC && impl_->dib) {
+        if (BitBlt(hdc, 0, 0, w_, h_, impl_->memDC, 0, 0, SRCCOPY)) return;
+    }
+    // Запасной путь
     G::Graphics dst(hdc);
     if (dst.GetLastStatus() != G::Ok) return;
     dst.SetCompositingMode(G::CompositingModeSourceCopy);

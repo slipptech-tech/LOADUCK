@@ -26,8 +26,12 @@ struct Blob {
     Color color;
     float intensity = 30.0f;
 };
-void DrawGlowLayer(Renderer& r, const std::vector<Blob>& blobs, const RectF& area);
-void ClearGlowCache();          // сброс кэша бликов (при смене размера/темы)
+
+// Фон целиком: вертикальный градиент + мягкие пятна. Рисуется попиксельно
+// прямо в буфер кадра и кэшируется, поэтому ни колец, ни артефактов.
+void PaintBackground(const RectF& area, Color top, Color bottom,
+                     const std::vector<Blob>& blobs);
+void ClearGlowCache();          // сброс кэша фона (смена темы/размера)
 
 // Инициализация/завершение
 bool Init(HWND hwnd);

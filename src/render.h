@@ -157,6 +157,8 @@ public:
     // Временное перенаправление вывода в посторонний GDI+ Graphics (иконка, скриншот)
     void* NativeGraphics() const;
     void SetNativeGraphics(void* gdiplusGraphics);
+    void* BackbufferBits() const;     // прямой доступ к пикселям кадра (BGRA)
+    void InvalidateBackgroundCache();
 
     // Рисует произвольный GDI+ Bitmap в указанный прямоугольник
     bool DrawBitmapExternal(void* gdiplusBitmap, const RectF& dst);

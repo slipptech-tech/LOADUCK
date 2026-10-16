@@ -30,6 +30,8 @@ void Show(const std::wstring& text, Kind kind, float life) {
 
 void Clear() { s_items.clear(); }
 
+bool Alive() { return !s_items.empty(); }
+
 void Tick() {
     for (auto it = s_items.begin(); it != s_items.end();) {
         if (ui::time - it->born > it->life) it = s_items.erase(it);

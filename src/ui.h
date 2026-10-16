@@ -27,6 +27,7 @@ struct Input {
 extern Input in;
 extern float dt;          // секунды с прошлого кадра
 extern double time;       // общий таймер в секундах
+extern int   frameAnim;   // сколько анимаций «в пути» в текущем кадре
 
 void Begin();
 void End();

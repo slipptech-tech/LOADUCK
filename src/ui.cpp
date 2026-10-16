@@ -11,6 +11,7 @@ namespace ui {
 Input in;
 float dt = 0.016f;
 double time = 0.0;
+int frameAnim = 0;
 
 static Renderer& R() { return GR(); }
 static float S(float v) { return gfx::S(v); }
@@ -52,6 +53,7 @@ float Ani(int id, float target, float speed) {
     if (k > 1.0f) k = 1.0f;
     cur += (target - cur) * k;
     if (std::fabs(target - cur) < 0.0008f) cur = target;
+    else ++frameAnim;
     return cur;
 }
 
@@ -217,11 +219,12 @@ bool IconButton(int id, const Rect& r, Icon ic, const std::wstring& tip, Color t
 
     Color base, fg;
     if (tint.a) {
-        base = Color(tint.r, tint.g, tint.b, (BYTE)(34 + 40 * h));
+        base = Color(tint.r, tint.g, tint.b, (BYTE)(38 + 40 * h));
         fg = tint;
     } else {
-        base = Mix(theme::surfaceAlt, theme::surfaceHi, h);
-        fg = enabled ? Mix(theme::textDim, theme::text, h) : theme::textMute;
+        // Заметный фон в покое, чтобы кнопка не тонула в карточке
+        base = Mix(Mix(theme::surfaceAlt, theme::surfaceHi, 0.45f), theme::surfaceHi, h);
+        fg = enabled ? Mix(theme::text, theme::text, h) : theme::textMute;
     }
 
     if (tint.a && h > 0.02f) {
@@ -239,8 +242,8 @@ bool IconButton(int id, const Rect& r, Icon ic, const std::wstring& tip, Color t
     R().FillGradV(rr, radius, base, ScaleColor(base, 0.72f));
     if (!tint.a) R().Stroke(rr, radius, Mix(theme::stroke, theme::strokeHi, h), 1.0f);
 
-    float sz = std::min(rr.w, rr.h) * 0.5f;
-    icons::Draw(R(), ic, Rect(rr.x + (rr.w - sz) / 2, rr.y + (rr.h - sz) / 2, sz, sz), fg, 1.9f);
+    float sz = std::min(rr.w, rr.h) * 0.52f;
+    icons::Draw(R(), ic, Rect(rr.x + (rr.w - sz) / 2, rr.y + (rr.h - sz) / 2, sz, sz), fg, 2.0f);
     if (hov && !tip.empty()) SetTooltip(rr, tip);
     return pressed && in.released;
 }

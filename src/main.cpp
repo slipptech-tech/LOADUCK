@@ -7,6 +7,7 @@
 #include "gfx.h"
 #include "util.h"
 #include "toast.h"
+#include "lang.h"
 
 #include <Windows.h>
 #include <Windowsx.h>
@@ -14,6 +15,7 @@
 #include <shellapi.h>
 #include <dwmapi.h>
 #include <commctrl.h>
+#include <mmsystem.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -65,10 +67,8 @@ bool g_trayAdded = false;
 constexpr UINT g_trayMsg = WM_APP + 7;
 UINT64 g_lastFrame = 0;
 HICON g_appIcon = nullptr;
-int g_fpsFrames = 0;
-double g_fps = 0;
-double g_lastFrameMs = 0;
-UINT64 g_fpsTime = 0;
+bool g_forceFrame = true;
+
 
 void Invalidate() {
     if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
@@ -120,14 +120,14 @@ std::wstring AppFfmpegPath(AppState& a) {
 }
 
 std::wstring AppQualityLabel(AppState& a, const std::wstring& q) {
-    const wchar_t* codec = (a.preferH264 && a.h264Available) ? L" · H.264" : L"";
-    if (q == L"audio") return L"Только аудио · " + util::ToUpper(a.audioFormat);
-    if (q.empty() || q == L"best") return std::wstring(L"Лучшее доступное качество") + codec;
+    const wchar_t* codec = (a.preferH264 && a.h264Available) ? TR(L" · H.264") : L"";
+    if (q == L"audio") return TR(L"Только аудио · ") + util::ToUpper(a.audioFormat);
+    if (q.empty() || q == L"best") return std::wstring(TR(L"Лучшее доступное качество")) + codec;
     return q + L"p · " + util::ToUpper(a.audioOnly ? a.audioFormat : a.container) + codec;
 }
 
 std::wstring AppContainerLabel(const std::wstring& c) {
-    if (c == L"auto") return L"Исходный контейнер";
+    if (c == L"auto") return TR(L"Исходный контейнер");
     return util::ToUpper(c);
 }
 
@@ -143,18 +143,18 @@ void AppCancelProbe(AppState& a) {
 void AppProbe(AppState& a) {
     std::wstring raw = util::Trim(a.urlInput);
     if (raw.empty()) {
-        toast::Show(L"Сначала вставьте ссылку", toast::Kind::Warn);
+        toast::Show(TR(L"Сначала вставьте ссылку"), toast::Kind::Warn);
         Invalidate();
         return;
     }
     std::wstring url = util::CleanUrl(raw);
     if (!util::IsSupportedUrl(url)) {
-        toast::Show(L"Это не похоже на ссылку на видео", toast::Kind::Error);
+        toast::Show(TR(L"Это не похоже на ссылку на видео"), toast::Kind::Error);
         Invalidate();
         return;
     }
     if (a.probing) {
-        toast::Show(L"Дождитесь окончания анализа", toast::Kind::Info, 2.0f);
+        toast::Show(TR(L"Дождитесь окончания анализа"), toast::Kind::Info, 2.0f);
         return;
     }
 
@@ -172,14 +172,18 @@ void AppProbe(AppState& a) {
         for (auto& t : g_probes) t->valid = false;
         g_probes.push_back(task);
     }
-    std::thread([task] {
+    const Settings& st = a.store.Get();
+    const bool useCookies = st.cookiesFromBrowser;
+    const std::wstring browser = st.cookiesBrowser;
+
+    std::thread([task, useCookies, browser] {
         MediaInfo info;
         std::wstring err;
         bool ok = false;
         try {
-            ok = engine::Probe(task->url, info, err);
+            ok = engine::Probe(task->url, info, err, useCookies, browser);
         } catch (...) {
-            err = L"Непредвиденная ошибка при анализе ссылки";
+            err = TR(L"Непредвиденная ошибка при анализе ссылки");
         }
         task->ok = ok;
         task->info = std::move(info);
@@ -223,23 +227,23 @@ static void ApplyProbeResults(AppState& a) {
             if (!allowed) a.quality = L"best";
         }
         a.scrollHome = 0;
-        toast::Show(L"Ссылка проанализирована", toast::Kind::Success, 2.4f);
+        toast::Show(TR(L"Ссылка проанализирована"), toast::Kind::Success, 2.4f);
     } else {
         a.info = MediaInfo();
-        a.probeError = t->err.empty() ? L"Неизвестная ошибка" : t->err;
-        toast::Show(L"Не удалось получить видео", toast::Kind::Error, 3.5f);
+        a.probeError = t->err.empty() ? TR(L"Неизвестная ошибка") : t->err;
+        toast::Show(TR(L"Не удалось получить видео"), toast::Kind::Error, 3.5f);
     }
     Invalidate();
 }
 
 void AppStartDownload(AppState& a) {
     if (!a.info.ok()) {
-        toast::Show(L"Сначала проанализируйте ссылку", toast::Kind::Warn);
+        toast::Show(TR(L"Сначала проанализируйте ссылку"), toast::Kind::Warn);
         Invalidate();
         return;
     }
     if (!engine::HasYtdlp(AppYtdlpPath(a))) {
-        toast::Show(L"Не установлен yt-dlp — откройте Настройки", toast::Kind::Error, 5.0f);
+        toast::Show(TR(L"Не установлен yt-dlp — откройте Настройки"), toast::Kind::Error, 5.0f);
         a.page = Page::Settings;
         Invalidate();
         return;
@@ -253,7 +257,7 @@ void AppStartDownload(AppState& a) {
         for (auto& j : a.jobs) {
             JobState s = j->GetState();
             if ((s == JobState::Queued || s == JobState::Running) && j->GetUrl() == target) {
-                toast::Show(L"Эта ссылка уже в очереди", toast::Kind::Info, 2.2f);
+                toast::Show(TR(L"Эта ссылка уже в очереди"), toast::Kind::Info, 2.2f);
                 a.page = Page::Downloads;
                 a.jobFilter = L"active";
                 Invalidate();
@@ -287,12 +291,12 @@ void AppStartDownload(AppState& a) {
     util::EnsureDir(opt.outDir);
 
     if (!a.audioOnly && a.container == L"mp4" && !engine::HasFfmpeg(AppFfmpegPath(a)))
-        toast::Show(L"Без ffmpeg склейка дорожек недоступна", toast::Kind::Warn, 4.0f);
+        toast::Show(TR(L"Без ffmpeg склейка дорожек недоступна"), toast::Kind::Warn, 4.0f);
 
     std::wstring shown = opt.title;
     if (shown.size() > 40) shown.resize(40);
     a.jobs.push_back(std::make_unique<Job>(opt));
-    toast::Show(L"Добавлено в очередь: " + shown, toast::Kind::Success, 2.6f);
+    toast::Show(TR(L"Добавлено в очередь: ") + shown, toast::Kind::Success, 2.6f);
     AppPumpJobs(a);
     a.page = Page::Downloads;
     a.jobFilter = L"active";
@@ -316,7 +320,7 @@ void AppPumpJobs(AppState& a) {
 
 void AppUpdateComponents(AppState& a) {
     UINT64 now = GetTickCount64();
-    if (now - a.ytdlpVersionAt < 8000) return;
+    if (now - a.ytdlpVersionAt < 60000) return;
 
     bool busy = false;
     {
@@ -326,7 +330,7 @@ void AppUpdateComponents(AppState& a) {
     }
     if (busy) return;
 
-    a.ytdlpVersionAt = now;
+    a.ytdlpVersionAt = (double)now;
     std::wstring path = AppYtdlpPath(a);
     auto task = std::make_shared<VersionTask>();
     {
@@ -363,14 +367,32 @@ void AppState::Init() {
 }
 
 void AppState::SyncFromSettings() {
-    outDir = store.Get().downloadDir;
-    fileNameTemplate = store.Get().fileTemplate;
-    quality = store.Get().defaultQuality;
-    container = store.Get().defaultContainer;
+    Settings& s = store.Get();
+    outDir = s.downloadDir;
+    fileNameTemplate = s.fileTemplate;
+    quality = s.defaultQuality;
+    container = s.defaultContainer;
     audioOnly = (quality == L"audio");
-    preferH264 = store.Get().preferH264;
-    theme::gAccent = theme::Accents()[theme::AccentIndexByName(store.Get().accent)];
+    preferH264 = s.preferH264;
+    lang::Set((lang::Id)std::clamp(s.lang, 0, 2));
+    theme::gAccent = theme::Accents()[theme::AccentIndexByName(s.accent)];
     util::EnsureDir(outDir);
+
+    // Если куки включены, а выбранного браузера на machine нет — молча брать куки
+    // неоткуда. Подставляем первый установленный, иначе отключаем флаг, чтобы
+    // интерфейс не показывал «включено», когда на деле куки не используются.
+    if (s.cookiesFromBrowser) {
+        if (!util::BrowserInstalled(s.cookiesBrowser)) {
+            std::wstring first = util::FirstInstalledBrowser();
+            if (!first.empty()) {
+                s.cookiesBrowser = first;
+                store.Save();
+            } else {
+                s.cookiesFromBrowser = false;
+                store.Save();
+            }
+        }
+    }
 }
 
 void AppState::PushToSettings() {
@@ -396,27 +418,12 @@ static void DrawFrame(AppState& a) {
     UINT64 now = GetTickCount64();
     float delta = g_lastFrame ? (float)(now - g_lastFrame) / 1000.0f : 0.016f;
     g_lastFrame = now;
-    g_lastFrameMs = delta * 1000.0;
     ui::dt = std::clamp(delta, 0.001f, 0.05f);
     ui::time = (double)now / 1000.0;
-    ++g_fpsFrames;
+    ui::frameAnim = 0;
 
     Renderer& r = GR();
     r.Begin();
-    r.Clear(theme::bg);
-    r.End();
-    {
-        static double fpsT = (double)GetTickCount64();
-        static int fpsN = 0;
-        ++fpsN;
-        UINT64 now2 = GetTickCount64();
-        if (now2 - (UINT64)fpsT >= 1000) { g_fps = fpsN * 1000.0 / (double)(now2 - (UINT64)fpsT); fpsT = now2; fpsN = 0; }
-    }
-    {
-        wchar_t fb[64]; swprintf_s(fb, L"%.0f fps / %.1f ms", g_fps, g_lastFrameMs);
-        Renderer& rd = GR();
-        rd.Text(fb, fonts::TINY, 400, theme::warning, RectF(20, (float)rd.Height() - 30, 260, 20), Align::Left, VAlign::Middle, false);
-    }
 
     float sbW = std::min(gfx::S(252), a.client.w * 0.24f);
     float tbH = gfx::S(56);
@@ -434,7 +441,6 @@ static void DrawFrame(AppState& a) {
     toast::Tick();
     toast::Draw(r, content);
     ui::End();
-
     r.End();
 }
 
@@ -478,11 +484,11 @@ static void OnTick(AppState& a) {
     if (!startChecked && ui::time > 0.8) {
         startChecked = true;
         if (!engine::HasYtdlp(AppYtdlpPath(a)))
-            toast::Show(L"Установите yt-dlp в настройках, чтобы начать", toast::Kind::Warn, 7.0f);
+            toast::Show(TR(L"Установите yt-dlp в настройках, чтобы начать"), toast::Kind::Warn, 7.0f);
         else if (!engine::HasFfmpeg(AppFfmpegPath(a)))
-            toast::Show(L"ffmpeg не найден: склейка дорожек недоступна", toast::Kind::Info, 7.0f);
+            toast::Show(TR(L"ffmpeg не найден: склейка дорожек недоступна"), toast::Kind::Info, 7.0f);
         else
-            toast::Show(L"Готово к работе. Вставьте ссылку на видео", toast::Kind::Success, 4.0f);
+            toast::Show(TR(L"Готово к работе. Вставьте ссылку на видео"), toast::Kind::Success, 4.0f);
     }
 
     ApplyProbeResults(a);
@@ -506,18 +512,35 @@ static void OnTick(AppState& a) {
             a.store.AddHistory(h);
             std::wstring t = j->GetTitle();
             if (t.size() > 38) t.resize(38);
-            toast::Show(L"Готово: " + t, toast::Kind::Success, 4.0f);
-            TrayBalloon(L"Загрузка завершена", j->GetTitle());
+            toast::Show(TR(L"Готово: ") + t, toast::Kind::Success, 4.0f);
+            TrayBalloon(TR(L"Загрузка завершена"), j->GetTitle());
             j->SetNotified();
         } else if (s == JobState::Failed) {
             std::wstring t = j->GetTitle();
             if (t.size() > 28) t.resize(28);
-            toast::Show(L"Ошибка загрузки: " + t, toast::Kind::Error, 5.0f);
-            TrayBalloon(L"Ошибка загрузки", j->GetError());
+            toast::Show(TR(L"Ошибка загрузки: ") + t, toast::Kind::Error, 5.0f);
+            TrayBalloon(TR(L"Ошибка загрузки"), j->GetError());
             j->SetNotified();
         }
     }
-    Invalidate();
+// Перерисовываем не каждый кадр, а только когда есть что показать:
+    // идут анимации, живут уведомления, изменилось состояние задач или был ввод.
+    static uint64_t lastSig = 0;
+    uint64_t sig = (uint64_t)a.probing * 131 + (uint64_t)a.jobs.size() * 7919;
+    for (auto& j : a.jobs) {
+        sig = sig * 1000003ull + (uint64_t)j->GetState();
+        JobProgress pr = j->GetProgress();
+        sig ^= (uint64_t)(pr.pct * 2000.0) * 31 + (uint64_t)pr.speed * 131;
+    }
+    bool stateChanged = (sig != lastSig);
+    lastSig = sig;
+
+    bool needFrame = stateChanged || ui::frameAnim > 0 || toast::Alive() ||
+                     ui::in.down || g_forceFrame;
+    if (needFrame) {
+        g_forceFrame = false;
+        Invalidate();
+    }
 }
 
 // ── Окно ──────────────────────────────────────────────────────────────────
@@ -536,7 +559,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             DragAcceptFiles(hwnd, TRUE);
             ApplyAccent(hwnd);
             if (!gfx::Init(hwnd)) {
-                MessageBoxW(hwnd, L"Не удалось инициализировать графический движок (Direct2D).",
+                MessageBoxW(hwnd, TR(L"Не удалось инициализировать графический движок (Direct2D)."),
                             L"LOADUCK", MB_ICONERROR);
                 return -1;
             }
@@ -606,12 +629,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ui::in.ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
             ui::in.shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             Invalidate();
+            g_forceFrame = true;
             return 0;
         }
         case WM_MOUSELEAVE:
             ui::in.x = -1000;
             ui::in.y = -1000;
             Invalidate();
+            g_forceFrame = true;
             return 0;
 
         case WM_LBUTTONDOWN:
@@ -623,6 +648,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ui::in.ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
             ui::in.shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             Invalidate();
+            g_forceFrame = true;
             return 0;
 
         case WM_LBUTTONUP:
@@ -631,6 +657,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ui::in.released = true;
             ui::in.down = false;
             Invalidate();
+            g_forceFrame = true;
             if (GetCapture() == hwnd) ReleaseCapture();
             return 0;
 
@@ -642,6 +669,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ui::in.y = (float)pt.y;
             ui::in.wheel = (float)GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA;
             Invalidate();
+            g_forceFrame = true;
             return 0;
         }
 
@@ -671,9 +699,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         a.urlInput = urls.front();
                         a.page = Page::Home;
                         if (!a.info.ok()) AppProbe(a);
-                        else toast::Show(L"Ссылка вставлена", toast::Kind::Info, 1.8f);
+                        else toast::Show(TR(L"Ссылка вставлена"), toast::Kind::Info, 1.8f);
                     } else {
-                        toast::Show(L"В буфере обмена нет ссылки", toast::Kind::Warn, 2.2f);
+                        toast::Show(TR(L"В буфере обмена нет ссылки"), toast::Kind::Warn, 2.2f);
                     }
                 } else if (vk == VK_RETURN) {
                     if (a.info.ok()) AppStartDownload(a);
@@ -684,11 +712,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
             Invalidate();
+            g_forceFrame = true;
             return 0;
         }
 
         case WM_CHAR: {
             wchar_t c = (wchar_t)wp;
+            g_forceFrame = true;
             if (c == VK_RETURN) {
                 // Ctrl+Enter уже обработан в WM_KEYDOWN — не запускаем второй раз
                 if (!ui::in.ctrl && !ui::in.shift && !ui::AnyFieldFocused()) {
@@ -738,11 +768,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (j->IsActive()) active = true;
             if (a.store.Get().closeToTray && active) {
                 ShowWindow(hwnd, SW_HIDE);
-                TrayBalloon(L"LOADUCK свернулся", L"Загрузки продолжаются в фоне");
+                TrayBalloon(TR(L"LOADUCK свернулся"), TR(L"Загрузки продолжаются в фоне"));
                 return 0;
             }
             if (active && a.store.Get().confirmExit) {
-                int r = MessageBoxW(hwnd, L"Загрузки ещё не завершены. Выйти из программы?",
+                int r = MessageBoxW(hwnd, TR(L"Загрузки ещё не завершены. Выйти из программы?"),
                                      L"LOADUCK", MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2);
                 if (r != IDYES) return 0;
             }
@@ -772,10 +802,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 POINT p{};
                 GetCursorPos(&p);
                 HMENU menu = CreatePopupMenu();
-                AppendMenuW(menu, MF_STRING, 100, L"Открыть LOADUCK");
-                AppendMenuW(menu, MF_STRING, 101, L"Новая ссылка");
+                AppendMenuW(menu, MF_STRING, 100, TR(L"Открыть LOADUCK"));
+                AppendMenuW(menu, MF_STRING, 101, TR(L"Новая ссылка"));
                 AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-                AppendMenuW(menu, MF_STRING, 102, L"Выход");
+                AppendMenuW(menu, MF_STRING, 102, TR(L"Выход"));
                 SetForegroundWindow(hwnd);
                 int cmd = (int)TrackPopupMenu(menu, TPM_RIGHTBUTTON, p.x, p.y, 0, hwnd, nullptr);
                 DestroyMenu(menu);
@@ -895,6 +925,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int nCmdShow) {
         TrayAdd();
     }
 
+    // Точный таймер 16 мс: без этого Windows округляет интервал до 15.6 мс и кадры
+    // «плавают», что заметно на анимациях.
+    timeBeginPeriod(1);
+
     ShowWindow(hwnd, SW_SHOWNORMAL);
     SetForegroundWindow(hwnd);
     SetTimer(hwnd, 1, 16, nullptr);
@@ -906,7 +940,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int nCmdShow) {
         if (util::IsSupportedUrl(app.urlInput))
             AppProbe(app);
         else
-            toast::Show(L"Ссылка из командной строки не поддерживается", toast::Kind::Warn, 4.0f);
+            toast::Show(TR(L"Ссылка из командной строки не поддерживается"), toast::Kind::Warn, 4.0f);
     }
 
     MSG msg{};

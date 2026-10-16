@@ -67,6 +67,43 @@ std::wstring ToUpper(const std::wstring& s) {
     return r;
 }
 
+namespace {
+// Каталоги профилей, которые yt-dlp умеет читать
+struct BrowserProfile { const wchar_t* name; const wchar_t* env; const wchar_t* sub; };
+const BrowserProfile kBrowsers[] = {
+    { L"chrome",  L"LOCALAPPDATA", L"Google\\Chrome\\User Data" },
+    { L"edge",    L"LOCALAPPDATA", L"Microsoft\\Edge\\User Data" },
+    { L"brave",   L"LOCALAPPDATA", L"BraveSoftware\\Brave-Browser\\User Data" },
+    { L"firefox", L"LOCALAPPDATA", L"Mozilla\\Firefox\\Profiles" },
+    { L"opera",   L"APPDATA",      L"Opera Software\\Opera Stable" },
+};
+
+std::wstring EnvDir(const wchar_t* name) {
+    wchar_t buf[MAX_PATH]{};
+    DWORD n = GetEnvironmentVariableW(name, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return {};
+    return buf;
+}
+} // namespace
+
+bool BrowserInstalled(const std::wstring& browser) {
+    std::wstring b = ToLower(Trim(browser));
+    for (const BrowserProfile& p : kBrowsers) {
+        if (b != p.name) continue;
+        std::wstring root = EnvDir(p.env);
+        if (root.empty()) return false;
+        // Профиль браузера — это каталог, а не файл
+        return DirExists(PathJoin(root, p.sub));
+    }
+    return false;
+}
+
+std::wstring FirstInstalledBrowser() {
+    for (const BrowserProfile& p : kBrowsers)
+        if (BrowserInstalled(p.name)) return p.name;
+    return {};
+}
+
 bool IEquals(const std::wstring& a, const std::wstring& b) {
     if (a.size() != b.size()) return false;
     for (size_t i = 0; i < a.size(); ++i)

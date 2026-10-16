@@ -74,6 +74,7 @@ void Store::Load() {
             s_.cookiesFromBrowser = getb("cookiesFromBrowser", false);
             s_.cookiesBrowser = getw("cookiesBrowser", L"chrome");
             s_.accent = getw("accent", L"Утка");
+            s_.lang = std::clamp(geti("lang", 0), 0, 2);
             s_.animatedBackground = getb("animatedBackground", true);
             s_.soundOnFinish = getb("soundOnFinish", false);
         }
@@ -120,6 +121,7 @@ void Store::Save() {
     j.set("cookiesFromBrowser", Json(s_.cookiesFromBrowser));
     j.set("cookiesBrowser", Json(util::WideToUtf8(s_.cookiesBrowser)));
     j.set("accent", Json(util::WideToUtf8(s_.accent)));
+    j.set("lang", Json(s_.lang));
     j.set("animatedBackground", Json(s_.animatedBackground));
     j.set("soundOnFinish", Json(s_.soundOnFinish));
     WriteFile(SettingsPath(), j.dump(2));

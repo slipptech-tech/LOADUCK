@@ -62,6 +62,7 @@ struct JobProgress {
     int    eta = 0;
     uint64_t downloaded = 0;
     uint64_t total = 0;
+    uint64_t approx = 0;     // сумма размеров дорожек (для оценки до конца)
     std::wstring stage;
 };
 
@@ -142,7 +143,8 @@ bool HasFfmpeg(const std::wstring& path);
 std::wstring YtdlpVersion(const std::wstring& path);
 
 // Анализ ссылки (блокирующий, вызывать из потока)
-bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err);
+bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err,
+           bool useCookies = false, const std::wstring& browser = L"");
 
 // Загрузка компонента с прогрессом
 struct ComponentDownload {

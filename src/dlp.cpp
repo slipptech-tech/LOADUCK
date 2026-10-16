@@ -258,11 +258,16 @@ void Job::Run() {
         args += L"--cookies-from-browser " + opt_.cookiesBrowser + L" ";
     if (opt_.rateLimit > 0)
         args += L"--limit-rate " + std::to_wstring(opt_.rateLimit) + L"K ";
-    // Явно указываем ffmpeg: в системе может лежать ancient-сборка, которая не понимает
+    // Явно указываем ffmpeg: в системе может лежать древняя сборка, которая не понимает
     // современные кодеки и роняет постобработку.
     if (!opt_.ffmpegPath.empty() && util::FileExists(opt_.ffmpegPath))
         args += L"--ffmpeg-location \"" + util::DirName(opt_.ffmpegPath) + L"\" ";
     args += L"\"" + opt_.url + L"\"";
+
+    // Если профиля выбранного браузера нет, сразу пробуем установленный
+    bool withCookies = opt_.useCookies && !opt_.cookiesBrowser.empty();
+    if (withCookies && !util::BrowserInstalled(opt_.cookiesBrowser))
+        withCookies = false;
 
     std::string errTail;
     Proc proc;
@@ -310,7 +315,10 @@ void Job::Run() {
             } else if (key == "TITLE") {
                 if (opt_.title.empty()) opt_.title = util::Utf8ToWide(val);
             } else if (key == "APX") {
-                if (prog_.total == 0 && IsNum(val)) prog_.total = strtoull(val.c_str(), nullptr, 10);
+                // before_dl печатается для каждой дорожки (видео и аудио) —
+                // накапливаем, иначе итог показывал размер одной дорожки
+                if (IsNum(val)) prog_.approx += strtoull(val.c_str(), nullptr, 10);
+                if (prog_.total == 0 && prog_.approx > 0) prog_.total = prog_.approx;
             }
             return;
         }
@@ -323,6 +331,27 @@ void Job::Run() {
     };
 
     int code = PumpAndWait(proc, onLine, &errTail);
+
+    // Куки могут не сработать (браузер закрыт, профиля нет, БД заблокирована).
+    // Вместо ошибки один раз пробуем повторить загрузку без них.
+    if (code != 0 && withCookies) {
+        std::wstring strip = L"--cookies-from-browser " + opt_.cookiesBrowser + L" ";
+        size_t p = args.find(strip);
+        if (p != std::wstring::npos) {
+            args.erase(p, strip.size());
+            errTail.clear();
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                prog_ = JobProgress();
+                prog_.stage = L"Повтор без куков";
+            }
+            Proc retry;
+            if (retry.Start(exe, args)) {
+                { std::lock_guard<std::mutex> lk(mu_); pid_ = retry.pid; }
+                code = PumpAndWait(retry, onLine, &errTail);
+            }
+        }
+    }
 
     std::lock_guard<std::mutex> lk(mu_);
     pid_ = 0;
@@ -451,16 +480,31 @@ std::wstring YtdlpVersion(const std::wstring& path) {
     return util::Trim(util::Utf8ToWide(out));
 }
 
-bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err) {
+bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err,
+           bool useCookies, const std::wstring& browser) {
     out = MediaInfo();
     std::wstring exe = ResolveTool(L"", L"yt-dlp.exe");
     if (exe.empty()) {
         err = L"Не найден yt-dlp.exe. Откройте «Настройки» и установите компоненты.";
         return false;
     }
-    std::wstring args = L"--no-playlist --no-warnings --no-color --ignore-config -J \"" + url + L"\"";
+
+    // Куки нужны уже на разборе: видео «18+» и закрытые ролики без них не отдают
+    // даже список форматов. Но если профиль заблокирован (браузер открыт) —
+    // повторяем запрос без куок, чтобы анализ не падал.
+    const bool wantCookies = useCookies && !browser.empty() && util::BrowserInstalled(browser);
+    std::wstring cookieArg = wantCookies ? (L"--cookies-from-browser " + browser + L" ") : L"";
+
+    const std::wstring base = L"--no-playlist --no-warnings --no-color --ignore-config ";
+    std::string text;
     int code = 0;
-    std::string text = RunCapture(exe, args, &code, 64u * 1024 * 1024);
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        std::wstring args = base + cookieArg + L"-J \"" + url + L"\"";
+        text = RunCapture(exe, args, &code, 64u * 1024 * 1024);
+        if (code == 0 && !text.empty()) break;
+        if (cookieArg.empty()) break;      // уже без куок — повтор не поможет
+        cookieArg.clear();                 // ещё одна попытка, уже без куок
+    }
     if (code != 0 || text.empty()) {
         // повторяем запрос, чтобы забрать текст ошибки из stderr
         std::string errText;

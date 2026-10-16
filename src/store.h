@@ -25,6 +25,7 @@ struct Settings {
     bool cookiesFromBrowser = false;
     std::wstring cookiesBrowser = L"chrome";
     std::wstring accent = L"Утка";
+    int         lang = 0;                // 0 — русский, 1 — английский, 2 — украинский
     bool animatedBackground = true;
     bool soundOnFinish = false;
 };

@@ -16,6 +16,12 @@ std::string  WideToUtf8(const std::wstring& s);
 
 std::wstring Trim(const std::wstring& s);
 std::wstring ToLower(const std::wstring& s);
+
+// Проверяет, установлен ли браузер (по папке профиля). Используется для выбора
+// браузера для куков: yt-dlp падает, если профиля нет.
+bool BrowserInstalled(const std::wstring& browser);
+// Первый установленный браузер из списка (пусто, если ни одного).
+std::wstring FirstInstalledBrowser();
 std::wstring ToUpper(const std::wstring& s);
 bool IEquals(const std::wstring& a, const std::wstring& b);
 bool IContains(const std::wstring& hay, const std::wstring& needle);

@@ -13,5 +13,6 @@ void Show(const std::wstring& text, Kind kind = Kind::Info, float life = 4.5f);
 void Tick();
 void Draw(Renderer& r, const RectF& area);
 void Clear();
+bool Alive();               // есть ли живые уведомления (нужно для перерисовки)
 
 } // namespace toast

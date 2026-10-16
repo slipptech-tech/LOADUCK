@@ -4,6 +4,7 @@
 #include "util.h"
 #include "theme.h"
 #include "gfx.h"
+#include "lang.h"
 
 #include <algorithm>
 #include <cmath>
@@ -77,19 +78,19 @@ static uint64_t EstimateSize(const MediaInfo& info, const std::wstring& quality,
 }
 static const wchar_t* PageTitle(Page p) {
     switch (p) {
-        case Page::Home: return L"Загрузка видео";
-        case Page::Downloads: return L"Очередь загрузок";
-        case Page::History: return L"История";
-        default: return L"Настройки";
+        case Page::Home: return TR(L"Загрузка видео");
+        case Page::Downloads: return TR(L"Очередь загрузок");
+        case Page::History: return TR(L"История");
+        default: return TR(L"Настройки");
     }
 }
 
 static const wchar_t* PageSubtitle(Page p) {
     switch (p) {
-        case Page::Home: return L"YouTube, TikTok, Instagram, X, Twitch и ещё 20+ сервисов";
-        case Page::Downloads: return L"Активные, завершённые и ошибочные загрузки";
-        case Page::History: return L"Все файлы, скачанные ранее";
-        default: return L"Компоненты, папки и поведение программы";
+        case Page::Home: return TR(L"YouTube, TikTok, Instagram, X, Twitch и ещё 20+ сервисов");
+        case Page::Downloads: return TR(L"Активные, завершённые и ошибочные загрузки");
+        case Page::History: return TR(L"Все файлы, скачанные ранее");
+        default: return TR(L"Компоненты, папки и поведение программы");
     }
 }
 
@@ -111,17 +112,14 @@ static float BadgeWidth(Renderer& r, const std::wstring& text, Icon ic = Icon::N
 // ── Фон ───────────────────────────────────────────────────────────────────
 
 void DrawBackground(AppState& a, const RectF& r) {
-    R().FillGradV(r, 0, theme::bg, Color(8, 11, 17));
-    if (!a.store.Get().animatedBackground) return;
-
-    float t = (float)ui::time;
+    (void)a;
+    // Мягкое статичное свечение: пятна считаются один раз и кэшируются.
     std::vector<gfx::Blob> blobs = {
-        { 0.18f + 0.035f * std::sin(t * 0.21f), 0.12f + 0.03f * std::cos(t * 0.17f), 0.30f, 1.10f, theme::A1(), 26.0f },
-        { 0.90f + 0.03f * std::cos(t * 0.13f), 0.88f + 0.035f * std::sin(t * 0.23f), 0.26f, 1.05f, theme::A2(), 22.0f },
-        { 0.66f + 0.04f * std::sin(t * 0.11f + 2.0f), 0.32f + 0.035f * std::cos(t * 0.15f + 1.0f), 0.20f, 1.0f,
-          Mix(theme::A1(), theme::A2(), 0.5f), 13.0f },
+        { 0.12f, 0.06f, 0.34f, 1.05f, theme::A1(), 46.0f },
+        { 0.94f, 0.96f, 0.30f, 1.10f, theme::A2(), 38.0f },
+        { 0.72f, 0.42f, 0.22f, 1.0f, Mix(theme::A1(), theme::A2(), 0.5f), 20.0f },
     };
-    gfx::DrawGlowLayer(R(), blobs, r);
+    gfx::PaintBackground(r, theme::bg, Color(8, 11, 17), blobs);
 }
 
 // ── Заголовок окна ────────────────────────────────────────────────────────
@@ -151,9 +149,9 @@ void DrawTitleBar(AppState& a, const RectF& r) {
     // кнопки окна
     struct WBtn { Icon ic; const wchar_t* tip; UINT msg; };
     const WBtn btns[3] = {
-        { Icon::Minus, L"Свернуть",   SC_MINIMIZE },
-        { Icon::Maximize, L"Развернуть", SC_MAXIMIZE },
-        { Icon::Close, L"Закрыть",    SC_CLOSE },
+        { Icon::Minus, TR(L"Свернуть"),   SC_MINIMIZE },
+        { Icon::Maximize, TR(L"Развернуть"), SC_MAXIMIZE },
+        { Icon::Close, TR(L"Закрыть"),    SC_CLOSE },
     };
     float bw = S(46);
     float x = r.right();
@@ -195,10 +193,10 @@ void DrawSidebar(AppState& a, const RectF& r) {
 
     struct NavItem { Page page; Icon ic; const wchar_t* label; int badge; };
     NavItem items[4] = {
-        { Page::Home,      Icon::Home,    L"Загрузка",  0 },
-        { Page::Downloads, Icon::Queue,   L"Очередь",   activeJobs },
-        { Page::History,   Icon::History, L"История",   0 },
-        { Page::Settings,  Icon::Settings,L"Настройки", 0 },
+        { Page::Home,      Icon::Home,    TR(L"Загрузка"),  0 },
+        { Page::Downloads, Icon::Queue,   TR(L"Очередь"),   activeJobs },
+        { Page::History,   Icon::History, TR(L"История"),   0 },
+        { Page::Settings,  Icon::Settings,TR(L"Настройки"), 0 },
     };
 
     for (int i = 0; i < 4; ++i) {
@@ -243,7 +241,7 @@ void DrawSidebar(AppState& a, const RectF& r) {
     RectF folder(r.x + pad, y + S(20), r.w - pad * 2, S(78));
     ui::Card(760, folder, true, S(14));
     icons::Draw(R(), Icon::Folder, RectF(folder.x + S(14), folder.y + S(14), S(18), S(18)), theme::A1(), 1.9f);
-    R().Text(L"Папка загрузок", fonts::TINY, 400, theme::textMute,
+    R().Text(TR(L"Папка загрузок"), fonts::TINY, 400, theme::textMute,
              RectF(folder.x + S(40), folder.y + S(11), folder.w - S(54), S(18)), Align::Left, VAlign::Middle, false);
     R().Text(a.store.Get().downloadDir, fonts::SMALL, 400, theme::text,
              RectF(folder.x + S(14), folder.y + S(38), folder.w - S(28), S(28)), Align::Left, VAlign::Middle, true);
@@ -256,16 +254,16 @@ void DrawSidebar(AppState& a, const RectF& r) {
     R().Stroke(status, S(14), Color(255, 255, 255, 18), 1.0f);
     bool hasYtdlp = engine::HasYtdlp(AppYtdlpPath(a));
     bool hasFfmpeg = engine::HasFfmpeg(AppFfmpegPath(a));
-    R().Text(L"Компоненты", fonts::TINY, 400, theme::textMute,
+    R().Text(TR(L"Компоненты"), fonts::TINY, 400, theme::textMute,
              RectF(status.x + S(14), status.y + S(8), status.w - S(28), S(16)), Align::Left, VAlign::Middle, false);
     auto chip = [&](float cx, float cy, bool ok, const wchar_t* tip) {
         R().Ellipse(cx, cy, S(4), S(4), ok ? theme::success : theme::warning);
         if (ui::Hover(status)) ui::SetTooltip(RectF(cx - S(10), cy - S(10), S(20), S(20)), tip);
     };
-    chip(status.x + S(19), status.y + S(39), hasYtdlp, hasYtdlp ? L"yt-dlp установлен" : L"yt-dlp не найден");
+    chip(status.x + S(19), status.y + S(39), hasYtdlp, hasYtdlp ? TR(L"yt-dlp установлен") : TR(L"yt-dlp не найден"));
     R().Text(L"yt-dlp", fonts::SMALL, 400, hasYtdlp ? theme::textDim : theme::warning,
              RectF(status.x + S(28), status.y + S(29), S(72), S(20)), Align::Left, VAlign::Middle, false);
-    chip(status.x + S(108), status.y + S(39), hasFfmpeg, hasFfmpeg ? L"ffmpeg найден" : L"ffmpeg не найден");
+    chip(status.x + S(108), status.y + S(39), hasFfmpeg, hasFfmpeg ? TR(L"ffmpeg найден") : TR(L"ffmpeg не найден"));
     R().Text(L"ffmpeg", fonts::SMALL, 400, hasFfmpeg ? theme::textDim : theme::warning,
              RectF(status.x + S(117), status.y + S(29), S(80), S(20)), Align::Left, VAlign::Middle, false);
 }
@@ -280,7 +278,7 @@ void DrawHeader(AppState& a, const RectF& r) {
     float by = r.y + (r.h - S(40)) / 2;
     float x = r.right() - pad;
     if (a.page == Page::Home) {
-        if (ui::Button(801, RectF(x - S(172), by, S(172), S(40)), L"Новая ссылка", Icon::Plus, ui::Btn::Primary)) {
+        if (ui::Button(801, RectF(x - S(172), by, S(172), S(40)), TR(L"Новая ссылка"), Icon::Plus, ui::Btn::Primary)) {
             a.urlInput.clear();
             a.info = MediaInfo();
             a.probeError.clear();
@@ -289,7 +287,7 @@ void DrawHeader(AppState& a, const RectF& r) {
         }
         x -= S(182);
     }
-    if (ui::IconButton(802, RectF(x - S(44), by, S(44), S(40)), Icon::External, L"Открыть папку загрузок"))
+    if (ui::IconButton(802, RectF(x - S(44), by, S(44), S(40)), Icon::External, TR(L"Открыть папку загрузок")))
         util::RevealInExplorer(a.store.Get().downloadDir);
 }
 
@@ -302,7 +300,7 @@ static void DrawUrlCard(AppState& a, const RectF& r) {
     float x = r.x + pad;
     float w = r.w - pad * 2;
 
-    R().Text(L"Вставьте ссылку на видео", fonts::H2, 600, theme::text,
+    R().Text(TR(L"Вставьте ссылку на видео"), fonts::H2, 600, theme::text,
              RectF(x, r.y + S(20), w, S(26)), Align::Left, VAlign::Middle, false);
 
     float rowY = r.y + S(60);
@@ -319,7 +317,7 @@ static void DrawUrlCard(AppState& a, const RectF& r) {
     std::wstring val = a.urlInput;
     ui::TextField(1001, field, val, L"https://www.youtube.com/watch?v=…");
     a.urlInput = val;
-    if (ui::Button(1002, paste, L"Вставить", Icon::Clipboard, ui::Btn::Soft)) {
+    if (ui::Button(1002, paste, TR(L"Вставить"), Icon::Clipboard, ui::Btn::Soft)) {
         std::wstring clip = util::ClipboardText();
         std::vector<std::wstring> urls = util::ExtractUrls(clip);
         if (!urls.empty()) { a.urlInput = urls.front(); AppProbe(a); }
@@ -328,9 +326,9 @@ static void DrawUrlCard(AppState& a, const RectF& r) {
 
     RectF go(paste.right() + S(10), rowY, S(112), rowH);
     if (a.probing) {
-        ui::Button(1003, go, L"Анализ…", Icon::None, ui::Btn::Primary, false);
+        ui::Button(1003, go, TR(L"Анализ…"), Icon::None, ui::Btn::Primary, false);
         ui::Spinner(RectF(go.right() - S(36), go.cy() - S(9), S(18), S(18)), Color(255, 255, 255, 255));
-    } else if (ui::Button(1003, go, L"Найти", Icon::Search, ui::Btn::Primary)) {
+    } else if (ui::Button(1003, go, TR(L"Найти"), Icon::Search, ui::Btn::Primary)) {
         AppProbe(a);
     }
 
@@ -343,7 +341,7 @@ static void DrawUrlCard(AppState& a, const RectF& r) {
     R().Stroke(RectF(r.x + S(7), r.y + S(7), r.w - S(14), r.h - S(14)), S(18), theme::A1(), 2.0f);
     R().FillRound(RectF(r.x + S(7), r.y + S(7), r.w - S(14), r.h - S(14)), S(18),
                   Color(theme::A1().r, theme::A1().g, theme::A1().b, 30));
-    R().Text(L"Отпустите ссылку", fonts::H3, 600, theme::text, r, Align::Center, VAlign::Middle, false);
+    R().Text(TR(L"Отпустите ссылку"), fonts::H3, 600, theme::text, r, Align::Center, VAlign::Middle, false);
 }
 
 // ── Главная: состояния ────────────────────────────────────────────────────
@@ -357,7 +355,7 @@ static void DrawProbing(AppState& a, const RectF& r) {
     ui::Skeleton(RectF(x, r.y + S(64), r.right() - x - S(140), S(16)), S(6));
     ui::Skeleton(RectF(x, r.y + S(92), S(210), S(14)), S(6));
     ui::Spinner(RectF(thumb.cx() - S(20), thumb.cy() - S(20), S(40), S(40)), theme::A1());
-    R().Text(L"Получаем информацию о видео…", fonts::BODY, 400, theme::textDim,
+    R().Text(TR(L"Получаем информацию о видео…"), fonts::BODY, 400, theme::textDim,
              RectF(x, r.y + S(124), S(340), S(20)), Align::Left, VAlign::Middle, false);
     (void)a;
 }
@@ -372,15 +370,15 @@ static void DrawError(AppState& a, const RectF& r) {
 
     float x = r.x + S(28);
     icons::Draw(R(), Icon::Error, RectF(x, r.y + S(24), S(24), S(24)), theme::danger, 2.0f);
-    R().Text(L"Не удалось получить видео", fonts::H2, 600, theme::text,
+    R().Text(TR(L"Не удалось получить видео"), fonts::H2, 600, theme::text,
              RectF(x + S(36), r.y + S(20), r.w - S(80), S(28)), Align::Left, VAlign::Middle, false);
     R().Text(a.probeError, fonts::SMALL, 400, theme::textDim,
              RectF(x + S(36), r.y + S(52), r.w - S(84), S(44)), Align::Left, VAlign::Top, true);
 
     float by = r.bottom() - S(62);
-    if (ui::Button(1201, RectF(x + S(36), by, S(156), S(42)), L"Повторить", Icon::Refresh, ui::Btn::Secondary))
+    if (ui::Button(1201, RectF(x + S(36), by, S(156), S(42)), TR(L"Повторить"), Icon::Refresh, ui::Btn::Secondary))
         AppProbe(a);
-    if (ui::Button(1202, RectF(x + S(202), by, S(200), S(42)), L"Открыть настройки", Icon::Settings, ui::Btn::Ghost))
+    if (ui::Button(1202, RectF(x + S(202), by, S(200), S(42)), TR(L"Открыть настройки"), Icon::Settings, ui::Btn::Ghost))
         a.page = Page::Settings;
 }
 
@@ -447,7 +445,7 @@ static void DrawMediaCard(AppState& a, const RectF& r) {
 
     // ── Источник ──
     std::wstring src = util::Utf8ToWide(info.extractor);
-    if (src.empty()) src = L"Видео";
+    if (src.empty()) src = TR(L"Видео");
     for (auto& c : src) if (c == L'_') c = L' ';
     float srcW = BadgeWidth(R(), src);
     Badge(R(), RectF(x, r.y + pad, srcW, gfx::S(24)), src, theme::A1());
@@ -471,30 +469,29 @@ static void DrawMediaCard(AppState& a, const RectF& r) {
         mx += tw + gfx::S(32);
     };
     if (!info.uploader.empty()) meta(Icon::Home, util::Utf8ToWide(info.uploader));
-    if (info.viewCount > 0) meta(Icon::Play, util::FormatCount(info.viewCount) + L" просмотров");
+    if (info.viewCount > 0) meta(Icon::Play, util::FormatCount(info.viewCount) + TR(L" просмотров"));
     if (info.duration > 0) meta(Icon::Clock, util::FormatDurationWords((int)info.duration));
 
     // копировать ссылку
-    if (ui::IconButton(1301, RectF(right - gfx::S(40), r.y + pad, gfx::S(40), gfx::S(36)), Icon::Copy, L"Скопировать ссылку")) {
+    if (ui::IconButton(1301, RectF(right - gfx::S(40), r.y + pad, gfx::S(40), gfx::S(36)), Icon::Copy, TR(L"Скопировать ссылку"))) {
         util::SetClipboardText(util::Utf8ToWide(info.webpageUrl.empty() ? info.title : info.webpageUrl));
-        toast::Show(L"Ссылка скопирована", toast::Kind::Success, 2.2f);
+        toast::Show(TR(L"Ссылка скопирована"), toast::Kind::Success, 2.2f);
     }
 
     // ── Качество ──
     float cy = r.y + pad + gfx::S(152);
     bool compat = a.preferH264 && a.h264Available;
 
-    R().Text(L"Качество", fonts::H3, 600, theme::textDim, RectF(x, cy, gfx::S(200), gfx::S(20)),
+    R().Text(TR(L"Качество"), fonts::H3, 600, theme::textDim, RectF(x, cy, gfx::S(200), gfx::S(20)),
              Align::Left, VAlign::Middle, false);
 
     // Переключатель совместимости: H.264 + AAC открывается любым системным плеером,
     // AV1/VP9 — нет (в них часто «пропадает» звук в штатном плеере Windows).
     if (info.hasH264) {
-        float swW = gfx::S(168);
-        RectF sw(right - swW, cy - gfx::S(5), swW, gfx::S(30));
+        RectF sw(right - gfx::S(52), cy, gfx::S(52), gfx::S(30));
         bool before = a.preferH264;
-        R().Text(L"Совместимый кодек", fonts::TINY, 400, theme::textMute,
-                 RectF(right - swW - gfx::S(150), cy, gfx::S(142), gfx::S(20)),
+        R().Text(TR(L"Совместимый кодек H.264"), fonts::TINY, 400, theme::textMute,
+                 RectF(right - gfx::S(52) - gfx::S(210), cy, gfx::S(198), gfx::S(30)),
                  Align::Right, VAlign::Middle, true);
         if (ui::Toggle(1390, sw, a.preferH264, Icon::Shield) && before != a.preferH264) {
             a.store.Get().preferH264 = a.preferH264;
@@ -525,7 +522,7 @@ static void DrawMediaCard(AppState& a, const RectF& r) {
     flow.Init(RectF(x, cy, right - x, 0), gfx::S(40), gfx::S(8));
     for (size_t i = 0; i < qualities.size(); ++i) {
         const std::wstring& q = qualities[i];
-        std::wstring label = (q == L"best") ? L"Максимум" : (q == L"audio" ? L"Только аудио" : q + L"p");
+        std::wstring label = (q == L"best") ? TR(L"Максимум") : (q == L"audio" ? TR(L"Только аудио") : q + L"p");
         bool sel = (a.exactFormat.empty() && a.quality == q);
         uint64_t sz = EstimateSize(info, q, q == L"audio", compat && q != L"audio");
         std::wstring sub = sz ? (L"~" + util::FormatBytes(sz)) : L"";
@@ -550,7 +547,7 @@ static void DrawMediaCard(AppState& a, const RectF& r) {
     cy = flow.Bottom() + gfx::S(18);
 
     // ── Контейнер / аудиоформат ──
-    R().Text(a.audioOnly ? L"Формат аудио" : L"Формат контейнера", fonts::H3, 600, theme::textDim,
+    R().Text(a.audioOnly ? TR(L"Формат аудио") : TR(L"Формат контейнера"), fonts::H3, 600, theme::textDim,
              RectF(x, cy, gfx::S(240), gfx::S(20)), Align::Left, VAlign::Middle, false);
     cy += gfx::S(28);
 
@@ -561,7 +558,7 @@ static void DrawMediaCard(AppState& a, const RectF& r) {
     Flow flow2;
     flow2.Init(RectF(x, cy, right - x, 0), gfx::S(36), gfx::S(8));
     for (size_t i = 0; i < opts.size(); ++i) {
-        std::wstring txt = (opts[i] == L"auto") ? L"Исходный" : util::ToUpper(opts[i]);
+        std::wstring txt = (opts[i] == L"auto") ? TR(L"Исходный") : util::ToUpper(opts[i]);
         float w = R().MeasureText(txt, fonts::SMALL, 600) + gfx::S(38);
         RectF cr = flow2.Take(w, gfx::S(36));
         bool sel = ((a.audioOnly ? a.audioFormat : a.container) == opts[i]);
@@ -581,7 +578,7 @@ static void DrawOptions(AppState& a, const RectF& r) {
     float right = r.right() - pad;
     float y = r.y + S(20);
 
-    R().Text(L"Куда сохранять", fonts::H2, 600, theme::text, RectF(x, y, gfx::S(300), gfx::S(26)),
+    R().Text(TR(L"Куда сохранять"), fonts::H2, 600, theme::text, RectF(x, y, gfx::S(300), gfx::S(26)),
              Align::Left, VAlign::Middle, false);
     y += gfx::S(40);
 
@@ -593,31 +590,31 @@ static void DrawOptions(AppState& a, const RectF& r) {
                 theme::textMute, 1.9f);
     std::wstring dir = a.outDir;
     ui::TextField(1601, RectF(folderField.x + gfx::S(44), folderField.y, folderField.w - gfx::S(52), folderField.h),
-                  dir, L"Папка для загрузок");
+                  dir, TR(L"Папка для загрузок"));
     a.outDir = dir;
-    if (ui::IconButton(1602, folderBtn, Icon::Folder, L"Выбрать папку")) {
+    if (ui::IconButton(1602, folderBtn, Icon::Folder, TR(L"Выбрать папку"))) {
         std::wstring pick = util::SelectFolderDialog(a.hwnd, a.outDir);
         if (!pick.empty()) {
             a.outDir = pick;
             a.store.Get().downloadDir = pick;
             util::EnsureDir(pick);
             a.store.Save();
-            toast::Show(L"Папка загрузок изменена", toast::Kind::Success, 2.2f);
+            toast::Show(TR(L"Папка загрузок изменена"), toast::Kind::Success, 2.2f);
         }
     }
-    if (ui::IconButton(1603, openBtn, Icon::External, L"Открыть папку"))
+    if (ui::IconButton(1603, openBtn, Icon::External, TR(L"Открыть папку")))
         util::RevealInExplorer(a.outDir);
     y += gfx::S(54);
 
     // имя файла
-    R().Text(L"Имя файла", fonts::H3, 600, theme::textDim, RectF(x, y + gfx::S(10), gfx::S(110), gfx::S(18)),
+    R().Text(TR(L"Имя файла"), fonts::H3, 600, theme::textDim, RectF(x, y + gfx::S(10), gfx::S(110), gfx::S(18)),
              Align::Left, VAlign::Middle, false);
     std::wstring tpl = a.fileNameTemplate;
     ui::TextField(1604, RectF(x + gfx::S(112), y, right - (x + gfx::S(112)), gfx::S(38)), tpl, L"%(title)s.%(ext)s");
     a.fileNameTemplate = tpl;
     y += gfx::S(46);
 
-    R().Text(L"Поддерживаются: %(title)s  %(id)s  %(ext)s  %(upload_date)s  %(duration)s", fonts::TINY, 400,
+    R().Text(TR(L"Поддерживаются: %(title)s  %(id)s  %(ext)s  %(upload_date)s  %(duration)s"), fonts::TINY, 400,
              theme::textMute, RectF(x, y, right - x, gfx::S(18)), Align::Left, VAlign::Middle, true);
     y += gfx::S(26);
 
@@ -626,9 +623,9 @@ static void DrawOptions(AppState& a, const RectF& r) {
     float colW = (right - x - gfx::S(24)) / 2;
     struct Sw { const wchar_t* label; bool* val; Icon ic; int id; };
     std::vector<Sw> sws = {
-        { L"Встроить обложку", &st.embedThumbnail, Icon::Thumbnail, 1605 },
-        { L"Метаданные в файл", &st.embedMeta, Icon::Info, 1607 },
-        { L"Скачать субтитры", &st.writeSubs, Icon::Subtitles, 1606 },
+        { TR(L"Встроить обложку"), &st.embedThumbnail, Icon::Thumbnail, 1605 },
+        { TR(L"Метаданные в файл"), &st.embedMeta, Icon::Info, 1607 },
+        { TR(L"Скачать субтитры"), &st.writeSubs, Icon::Subtitles, 1606 },
     };
     for (size_t i = 0; i < sws.size(); ++i) {
         float sx = x + (float)(i % 2) * (colW + gfx::S(24));
@@ -655,7 +652,7 @@ static void DrawAdvanced(AppState& a, const RectF& r) {
     float right = r.right() - pad;
     float y = r.y + gfx::S(20);
 
-    R().Text(L"Дополнительно", fonts::H2, 600, theme::text, RectF(x, y, gfx::S(300), gfx::S(26)),
+    R().Text(TR(L"Дополнительно"), fonts::H2, 600, theme::text, RectF(x, y, gfx::S(300), gfx::S(26)),
              Align::Left, VAlign::Middle, false);
     y += gfx::S(42);
 
@@ -663,9 +660,9 @@ static void DrawAdvanced(AppState& a, const RectF& r) {
     float colW = (right - x - gfx::S(32)) / 2;
 
     // лимит скорости
-    R().Text(L"Ограничение скорости", fonts::BODY, 400, theme::text,
+    R().Text(TR(L"Ограничение скорости"), fonts::BODY, 400, theme::text,
              RectF(x, y, colW - gfx::S(140), gfx::S(24)), Align::Left, VAlign::Middle, false);
-    std::wstring rateText = a.rateLimit <= 0 ? L"Без ограничений" : (std::to_wstring(a.rateLimit) + L" КБ/с");
+    std::wstring rateText = a.rateLimit <= 0 ? TR(L"Без ограничений") : (std::to_wstring(a.rateLimit) + TR(L" КБ/с"));
     R().Text(rateText, fonts::SMALL, 400, theme::textDim, RectF(x + colW - gfx::S(150), y, gfx::S(150), gfx::S(24)),
              Align::Right, VAlign::Middle, false);
 
@@ -692,28 +689,40 @@ static void DrawAdvanced(AppState& a, const RectF& r) {
 
     // куки
     float cx = x + colW + gfx::S(32);
-    R().Text(L"Куки из браузера", fonts::BODY, 400, theme::text,
+    R().Text(TR(L"Куки из браузера"), fonts::BODY, 400, theme::text,
              RectF(cx, y, colW - gfx::S(60), gfx::S(24)), Align::Left, VAlign::Middle, false);
+    // Куки из браузера. Важно: ui::Toggle уже переключает значение — второй раз
+// переворачивать нельзя, иначе флаг всегда возвращался обратно.
     bool cb = st.cookiesFromBrowser;
     if (ui::Toggle(1702, RectF(cx + colW - gfx::S(52), y - gfx::S(2), gfx::S(52), gfx::S(30)),
                    st.cookiesFromBrowser, Icon::Cookie) && cb != st.cookiesFromBrowser) {
-        st.cookiesFromBrowser = !st.cookiesFromBrowser;
         a.store.Save();
+        if (st.cookiesFromBrowser)
+            toast::Show(TR(L"Куки будут взяты из выбранного браузера. Закройте его перед скачиванием"),
+                        toast::Kind::Info, 4.5f);
     }
 
     Flow bf;
     bf.Init(RectF(cx, y + gfx::S(34), colW, 0), gfx::S(32), gfx::S(7));
     const wchar_t* browsers[] = { L"chrome", L"firefox", L"edge", L"opera", L"brave" };
+    std::wstring found = util::FirstInstalledBrowser();
     for (int i = 0; i < 5; ++i) {
         std::wstring b = browsers[i];
+        bool has = util::BrowserInstalled(b);
+        if (!found.empty() && !has) continue;      // показываем только установленные
         float w = R().MeasureText(b, fonts::TINY, 400) + gfx::S(28);
-        if (ui::Chip(1710 + i, bf.Take(w, gfx::S(32)), b, util::ToLower(st.cookiesBrowser) == b))
+        if (ui::Chip(1710 + i, bf.Take(w, gfx::S(32)), b, util::ToLower(st.cookiesBrowser) == b)) {
             st.cookiesBrowser = b;
+            a.store.Save();
+        }
     }
+    if (found.empty())
+        R().Text(TR(L"Браузер не найден — куки отключены"), fonts::TINY, 400, theme::textMute,
+                 RectF(cx, y + gfx::S(72), colW, gfx::S(18)), Align::Left, VAlign::Middle, true);
 
     // список форматов
     y += gfx::S(100);
-    R().Text(L"Все форматы (точный выбор)", fonts::H3, 600, theme::textDim,
+    R().Text(TR(L"Все форматы (точный выбор)"), fonts::H3, 600, theme::textDim,
              RectF(x, y, gfx::S(320), gfx::S(20)), Align::Left, VAlign::Middle, false);
     y += gfx::S(26);
 
@@ -722,11 +731,16 @@ static void DrawAdvanced(AppState& a, const RectF& r) {
     float contentH = (float)a.info.formats.size() * (rowH + gfx::S(7));
     ui::ScrollArea(1720, listRect, a.formatsScroll, std::max(contentH, listRect.h), [&](const RectF& content) {
         float fy = content.y;
+        // Отрисовываем только то, что реально попадает в видимую область списка.
+        // (Раньше сравнение шло с начала контента — при прокрутке список выглядел пустым.)
+        const float visTop = listRect.y - gfx::S(70);
+        const float visBottom = listRect.bottom() + gfx::S(70);
         for (size_t i = 0; i < a.info.formats.size(); ++i) {
+            if (fy + rowH > visBottom) break;
+            if (fy + rowH > visTop) {
             const MediaFormat& f = a.info.formats[i];
-            if (fy + rowH > content.y + listRect.h + gfx::S(40)) break;
             RectF fr(content.x, fy, content.w, rowH);
-            std::wstring label = f.height > 0 ? (std::to_wstring(f.height) + L"p") : L"Аудио";
+            std::wstring label = f.height > 0 ? (std::to_wstring(f.height) + L"p") : TR(L"Аудио");
             if (f.height == 0 && !f.resolution.empty()) label = util::Utf8ToWide(f.resolution);
             std::wstring tag = util::ToUpper(util::Utf8ToWide(f.ext));
             bool sel = a.exactFormat == util::Utf8ToWide(f.id);
@@ -756,6 +770,7 @@ static void DrawAdvanced(AppState& a, const RectF& r) {
                 if (sel) { a.exactFormat.clear(); a.exactFormatLabel.clear(); }
                 else { a.exactFormat = util::Utf8ToWide(f.id); a.exactFormatLabel = label + L" · " + tag; }
             }
+            }
             fy += rowH + gfx::S(7);
         }
     });
@@ -770,8 +785,8 @@ static void DrawActionBar(AppState& a, const RectF& r) {
     R().Stroke(r, gfx::S(20), Color(255, 255, 255, 22), 1.0f);
 
     std::wstring hint = a.exactFormat.empty() ? AppQualityLabel(a, a.audioOnly ? L"audio" : a.quality)
-                                              : L"Формат: " + a.exactFormatLabel;
-    R().Text(L"Будет сохранено как", fonts::TINY, 400, theme::textMute,
+                                              : TR(L"Формат: ") + a.exactFormatLabel;
+    R().Text(TR(L"Будет сохранено как"), fonts::TINY, 400, theme::textMute,
              RectF(r.x + pad, r.y + gfx::S(16), gfx::S(360), gfx::S(18)), Align::Left, VAlign::Middle, false);
     R().Text(hint, fonts::BODY, 500, theme::text, RectF(r.x + pad, r.y + gfx::S(36), gfx::S(400), gfx::S(24)),
              Align::Left, VAlign::Middle, true);
@@ -782,17 +797,17 @@ static void DrawActionBar(AppState& a, const RectF& r) {
 
     if (ui::Button(1801, RectF(x - gfx::S(48), by, gfx::S(48), bh), L"", Icon::Clipboard, ui::Btn::Ghost)) {
         util::SetClipboardText(util::Utf8ToWide(a.info.webpageUrl));
-        toast::Show(L"Ссылка скопирована", toast::Kind::Success, 2.0f);
+        toast::Show(TR(L"Ссылка скопирована"), toast::Kind::Success, 2.0f);
     }
     x -= gfx::S(58);
 
     if (ui::Button(1803, RectF(x - gfx::S(184), by, gfx::S(184), bh),
-                   a.advancedOpen ? L"Скрыть дополнительно" : L"Дополнительно",
+                   a.advancedOpen ? TR(L"Скрыть дополнительно") : TR(L"Дополнительно"),
                    a.advancedOpen ? Icon::ChevronDown : Icon::ChevronRight, ui::Btn::Secondary))
         a.advancedOpen = !a.advancedOpen;
     x -= gfx::S(194);
 
-    if (ui::Button(1802, RectF(x - gfx::S(220), by, gfx::S(220), bh), L"Скачать", Icon::Download, ui::Btn::Primary))
+    if (ui::Button(1802, RectF(x - gfx::S(220), by, gfx::S(220), bh), TR(L"Скачать"), Icon::Download, ui::Btn::Primary))
         AppStartDownload(a);
 }
 
@@ -801,12 +816,12 @@ static void DrawActionBar(AppState& a, const RectF& r) {
 static void DrawTips(AppState& a, const RectF& r) {
     ui::Card(2000, r, true, S(20));
     float x = r.x + gfx::S(28);
-    R().Text(L"Как пользоваться", fonts::H2, 600, theme::text, RectF(x, r.y + gfx::S(20), gfx::S(300), gfx::S(26)),
+    R().Text(TR(L"Как пользоваться"), fonts::H2, 600, theme::text, RectF(x, r.y + gfx::S(20), gfx::S(300), gfx::S(26)),
              Align::Left, VAlign::Middle, false);
     const wchar_t* steps[3] = {
-        L"Скопируйте ссылку на видео из YouTube, TikTok или другого сервиса",
-        L"Вставьте её в поле выше (Ctrl+V) и нажмите «Найти»",
-        L"Выберите качество и формат, затем нажмите «Скачать»",
+        TR(L"Скопируйте ссылку на видео из YouTube, TikTok или другого сервиса"),
+        TR(L"Вставьте её в поле выше (Ctrl+V) и нажмите «Найти»"),
+        TR(L"Выберите качество и формат, затем нажмите «Скачать»"),
     };
     float sy = r.y + gfx::S(60);
     for (int i = 0; i < 3; ++i) {
@@ -900,7 +915,7 @@ static void DrawJobCard(AppState& a, Job* job, const RectF& r, int id) {
                          Color(c.r, c.g, c.b, 70), c);
 
     float tx = x + gfx::S(58);
-    R().Text(job->GetTitle().empty() ? L"Загрузка…" : job->GetTitle(), fonts::BODY, 600, theme::text,
+    R().Text(job->GetTitle().empty() ? TR(L"Загрузка…") : job->GetTitle(), fonts::BODY, 600, theme::text,
              RectF(tx, cr.y + gfx::S(14), right - tx - gfx::S(230), gfx::S(22)), Align::Left, VAlign::Middle, true);
 
     std::wstring status = job->GetStage();
@@ -918,7 +933,14 @@ static void DrawJobCard(AppState& a, Job* job, const RectF& r, int id) {
 
     float ly = cr.bottom() - gfx::S(30);
     std::wstring meta;
-    if (pr.total > 0) meta = util::FormatBytes(pr.downloaded) + L" из " + util::FormatBytes(pr.total);
+    if (st == JobState::Done) {
+        // У готового файла размер известен точно — он больше, чем оценка по дорожкам
+        uint64_t real = job->GetResultSize();
+        if (real) meta = util::FormatBytes(real);
+        else if (pr.total) meta = util::FormatBytes(pr.total);
+    } else if (pr.total > 0) {
+        meta = util::FormatBytes(pr.downloaded) + TR(L" из ") + util::FormatBytes(pr.total);
+    }
     if (!job->GetQualityLabel().empty()) {
         if (!meta.empty()) meta += L"   ·   ";
         meta += job->GetQualityLabel();
@@ -945,17 +967,17 @@ static void DrawJobCard(AppState& a, Job* job, const RectF& r, int id) {
             if (it->get() == job) { a.jobs.erase(it); break; }
     };
     if (st == JobState::Running || st == JobState::Queued) {
-        btn(Icon::Pause, L"Пауза (файл сохранится)", theme::warning, [&] { job->Pause(); });
-        btn(Icon::Close, L"Отменить", theme::danger, [&] { job->Cancel(); });
+        btn(Icon::Pause, TR(L"Пауза (файл сохранится)"), theme::warning, [&] { job->Pause(); });
+        btn(Icon::Close, TR(L"Отменить"), theme::danger, [&] { job->Cancel(); });
     } else if (st == JobState::Paused) {
-        btn(Icon::Play, L"Продолжить", Color(), [&] { job->Resume(AppYtdlpPath(a)); });
-        btn(Icon::Trash, L"Убрать из списка", theme::danger, remove);
+        btn(Icon::Play, TR(L"Продолжить"), Color(), [&] { job->Resume(AppYtdlpPath(a)); });
+        btn(Icon::Trash, TR(L"Убрать из списка"), theme::danger, remove);
     } else {
         std::wstring file = job->GetFile();
-        if (!file.empty()) btn(Icon::External, L"Показать файл", Color(), [&] { util::RevealInExplorer(file); });
+        if (!file.empty()) btn(Icon::External, TR(L"Показать файл"), Color(), [&] { util::RevealInExplorer(file); });
         if (st == JobState::Failed)
-            btn(Icon::Refresh, L"Повторить", theme::A1(), [&] { job->Retry(AppYtdlpPath(a)); });
-        btn(Icon::Trash, L"Убрать из списка", theme::danger, remove);
+            btn(Icon::Refresh, TR(L"Повторить"), theme::A1(), [&] { job->Retry(AppYtdlpPath(a)); });
+        btn(Icon::Trash, TR(L"Убрать из списка"), theme::danger, remove);
     }
 }
 
@@ -988,7 +1010,7 @@ static void DrawDownloads(AppState& a, const RectF& clip) {
     if (a.jobFilter.empty()) a.jobFilter = L"active";
 
     std::vector<std::pair<std::wstring, std::wstring>> filters = {
-        { L"Активные", L"active" }, { L"Все", L"all" }, { L"Завершённые", L"done" }, { L"Ошибки", L"error" },
+        { TR(L"Активные"), L"active" }, { TR(L"Все"), L"all" }, { TR(L"Завершённые"), L"done" }, { TR(L"Ошибки"), L"error" },
     };
     auto countFor = [&](const std::wstring& f) {
         int c = 0;
@@ -1011,7 +1033,7 @@ static void DrawDownloads(AppState& a, const RectF& clip) {
             a.jobFilter = filters[i].second;
         fx += w + gfx::S(8);
     }
-    if (ui::Button(2110, RectF(inner.right() - gfx::S(190), fy, gfx::S(190), gfx::S(36)), L"Очистить завершённые",
+    if (ui::Button(2110, RectF(inner.right() - gfx::S(190), fy, gfx::S(190), gfx::S(36)), TR(L"Очистить завершённые"),
                    Icon::Trash, ui::Btn::Ghost))
         a.jobs.erase(std::remove_if(a.jobs.begin(), a.jobs.end(),
                                     [](const std::unique_ptr<Job>& j) {
@@ -1033,7 +1055,7 @@ static void DrawDownloads(AppState& a, const RectF& clip) {
 
     if (list.empty()) {
         DrawEmptyState(RectF(inner.x, fy, inner.w, inner.bottom() - fy - gfx::S(20)), Icon::Queue,
-                       L"Здесь пока пусто", L"Запустите загрузку с главной страницы", 2200);
+                       TR(L"Здесь пока пусто"), TR(L"Запустите загрузку с главной страницы"), 2200);
         return;
     }
 
@@ -1068,9 +1090,9 @@ static void DrawHistory(AppState& a, const RectF& clip) {
         R().Text(label, fonts::TINY, 400, theme::textMute, RectF(cx + gfx::S(54), stats.y + gfx::S(42), gfx::S(260), gfx::S(18)),
                  Align::Left, VAlign::Middle, true);
     };
-    stat(inner.x + gfx::S(22), std::to_wstring(count), L"файлов в истории", Icon::Video, theme::A1());
-    stat(inner.x + gfx::S(260), util::FormatBytes(bytes), L"суммарный объём", Icon::Download, theme::success);
-    stat(inner.x + gfx::S(500), a.store.Get().downloadDir, L"папка загрузок", Icon::Folder, theme::warning);
+    stat(inner.x + gfx::S(22), std::to_wstring(count), TR(L"файлов в истории"), Icon::Video, theme::A1());
+    stat(inner.x + gfx::S(260), util::FormatBytes(bytes), TR(L"суммарный объём"), Icon::Download, theme::success);
+    stat(inner.x + gfx::S(500), a.store.Get().downloadDir, TR(L"папка загрузок"), Icon::Folder, theme::warning);
 
     float fy = inner.y + gfx::S(94);
     RectF search(inner.x, fy, inner.w - gfx::S(200), gfx::S(44));
@@ -1078,9 +1100,9 @@ static void DrawHistory(AppState& a, const RectF& clip) {
                 theme::textMute, 1.9f);
     std::wstring q = a.historySearch;
     ui::TextField(2450, RectF(search.x + gfx::S(44), search.y, search.w - gfx::S(54), search.h), q,
-                  L"Поиск по названию…");
+                  TR(L"Поиск по названию…"));
     a.historySearch = q;
-    if (ui::Button(2451, RectF(inner.right() - gfx::S(190), fy, gfx::S(190), gfx::S(44)), L"Очистить историю",
+    if (ui::Button(2451, RectF(inner.right() - gfx::S(190), fy, gfx::S(190), gfx::S(44)), TR(L"Очистить историю"),
                    Icon::Trash, ui::Btn::Soft))
         a.store.ClearHistory();
     fy += gfx::S(60);
@@ -1094,7 +1116,7 @@ static void DrawHistory(AppState& a, const RectF& clip) {
 
     if (items.empty()) {
         DrawEmptyState(RectF(inner.x, fy, inner.w, inner.bottom() - fy), Icon::History,
-                       L"История пуста", L"Скачанные файлы появятся здесь", 2500);
+                       TR(L"История пуста"), TR(L"Скачанные файлы появятся здесь"), 2500);
         return;
     }
 
@@ -1123,7 +1145,7 @@ static void DrawHistory(AppState& a, const RectF& clip) {
             std::wstring meta = util::FormatDateTime(h.when);
             if (!h.quality.empty()) meta += L"   ·   " + h.quality;
             if (h.size) meta += L"   ·   " + util::FormatBytes(h.size);
-            if (!exists) meta += L"   ·   файл не найден";
+            if (!exists) meta += TR(L"   ·   файл не найден");
             R().Text(meta, fonts::TINY, 400, exists ? theme::textMute : theme::warning,
                      RectF(fr.x + gfx::S(68), fr.y + gfx::S(39), fr.w - gfx::S(330), gfx::S(18)),
                      Align::Left, VAlign::Middle, true);
@@ -1134,15 +1156,15 @@ static void DrawHistory(AppState& a, const RectF& clip) {
                 if (ui::IconButton(27000 + seq++, RectF(bx, fr.cy() - gfx::S(18), gfx::S(36), gfx::S(36)), ic, tip, tint))
                     act();
             };
-            btn(Icon::External, exists ? L"Показать файл" : L"Открыть папку", Color(), [&] {
+            btn(Icon::External, exists ? TR(L"Показать файл") : TR(L"Открыть папку"), Color(), [&] {
                 if (exists) { util::RevealInExplorer(h.filePath); a.store.MarkOpened(h.url); }
                 else util::RevealInExplorer(util::DirName(h.filePath));
             });
-            btn(Icon::Link, L"Скопировать ссылку", Color(), [&] {
+            btn(Icon::Link, TR(L"Скопировать ссылку"), Color(), [&] {
                 util::SetClipboardText(h.url);
-                toast::Show(L"Ссылка скопирована", toast::Kind::Success, 2.0f);
+                toast::Show(TR(L"Ссылка скопирована"), toast::Kind::Success, 2.0f);
             });
-            btn(Icon::Trash, L"Убрать из истории", theme::danger, [&] {
+            btn(Icon::Trash, TR(L"Убрать из истории"), theme::danger, [&] {
                 a.store.RemoveHistory(h.url);
                 a.store.Save();
             });
@@ -1159,7 +1181,9 @@ static void DrawSettings(AppState& a, const RectF& clip) {
     RectF inner(clip.x + pad, clip.y + pad, clip.w - pad * 2, clip.h - pad * 2);
     Settings& st = a.store.Get();
 
-    float contentH = gfx::S(230) + gfx::S(320) + gfx::S(180) + gfx::S(150) + gfx::S(170) + gfx::S(150);
+    // 230 (компоненты) + 364 (загрузки) + 220 (формат) + 150 (куки)
+// + 234 (интерфейс) + 150 (данные) + запас снизу
+float contentH = gfx::S(1348);
     ui::ScrollArea(3000, inner, a.scrollSettings, contentH, [&](const RectF& content) {
         float y = content.y;
         float W = content.w;
@@ -1168,9 +1192,9 @@ static void DrawSettings(AppState& a, const RectF& clip) {
         // ── Компоненты ───────────────────────────────────────────────────
         RectF comp(content.x, y, W, gfx::S(210));
         ui::Card(3100, comp, false, S(20));
-        R().Text(L"Компоненты", fonts::H2, 600, theme::text, RectF(comp.x + gfx::S(26), comp.y + gfx::S(18), gfx::S(320), gfx::S(26)),
+        R().Text(TR(L"Компоненты"), fonts::H2, 600, theme::text, RectF(comp.x + gfx::S(26), comp.y + gfx::S(18), gfx::S(320), gfx::S(26)),
                  Align::Left, VAlign::Middle, false);
-        R().Text(L"yt-dlp скачивает видео, ffmpeg склеивает дорожки и извлекает звук", fonts::TINY, 400,
+        R().Text(TR(L"yt-dlp скачивает видео, ffmpeg склеивает дорожки и извлекает звук"), fonts::TINY, 400,
                  theme::textMute, RectF(comp.x + gfx::S(26), comp.y + gfx::S(46), gfx::S(600), gfx::S(18)),
                  Align::Left, VAlign::Middle, true);
 
@@ -1190,7 +1214,7 @@ static void DrawSettings(AppState& a, const RectF& clip) {
             R().Ellipse(cr.x + gfx::S(21), cr.y + gfx::S(27), gfx::S(5), gfx::S(5), stc);
             R().Text(name, fonts::BODY, 600, theme::text, RectF(cr.x + gfx::S(38), cr.y + gfx::S(8), gfx::S(160), gfx::S(20)),
                      Align::Left, VAlign::Middle, false);
-            std::wstring sub = has ? util::BaseName(path) : L"не установлен";
+            std::wstring sub = has ? util::BaseName(path) : TR(L"не установлен");
             if (i == 0 && has && !a.ytdlpVersionCache.empty()) sub += L"   ·   " + a.ytdlpVersionCache;
             R().Text(sub, fonts::TINY, 400, theme::textMute, RectF(cr.x + gfx::S(38), cr.y + gfx::S(28), gfx::S(380), gfx::S(18)),
                      Align::Left, VAlign::Middle, true);
@@ -1206,11 +1230,11 @@ static void DrawSettings(AppState& a, const RectF& clip) {
                 x -= gfx::S(8);
             };
             if (has) {
-                btn(L"Обзор", Icon::Folder, [&] {
-                    std::wstring pick = util::SelectFileDialog(a.hwnd, util::BinDir(), L"Исполняемые файлы (*.exe)\0*.exe\0\0");
+                btn(TR(L"Обзор"), Icon::Folder, [&] {
+                    std::wstring pick = util::SelectFileDialog(a.hwnd, util::BinDir(), TR(L"Исполняемые файлы (*.exe)\0*.exe\0\0"));
                     if (!pick.empty()) { if (i == 0) { st.ytdlpPath = pick; dirty = true; } else { st.ffmpegPath = pick; dirty = true; } }
                 });
-                btn(L"Обновить", Icon::Refresh, [&] {
+                btn(TR(L"Обновить"), Icon::Refresh, [&] {
                     const wchar_t* url = (i == 0)
                         ? L"https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
                         : L"https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-win32-x64";
@@ -1218,10 +1242,10 @@ static void DrawSettings(AppState& a, const RectF& clip) {
                     auto state = std::make_shared<engine::ComponentDownload>();
                     if (i == 0) a.dlYtdlp = state; else a.dlFfmpeg = state;
                     engine::StartComponentDownload(url, dest, state);
-                    toast::Show(std::wstring(L"Загрузка ") + name + L"…", toast::Kind::Info);
+                    toast::Show(std::wstring(TR(L"Загрузка ")) + name + L"…", toast::Kind::Info);
                 });
             } else {
-                btn(L"Установить", Icon::Download, [&] {
+                btn(TR(L"Установить"), Icon::Download, [&] {
                     const wchar_t* url = (i == 0)
                         ? L"https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
                         : L"https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-win32-x64";
@@ -1229,7 +1253,7 @@ static void DrawSettings(AppState& a, const RectF& clip) {
                     auto state = std::make_shared<engine::ComponentDownload>();
                     if (i == 0) a.dlYtdlp = state; else a.dlFfmpeg = state;
                     engine::StartComponentDownload(url, dest, state);
-                    toast::Show(std::wstring(L"Загрузка ") + name + L"…", toast::Kind::Info);
+                    toast::Show(std::wstring(TR(L"Загрузка ")) + name + L"…", toast::Kind::Info);
                 }, true);
             }
 
@@ -1240,7 +1264,7 @@ static void DrawSettings(AppState& a, const RectF& clip) {
                              (float)p, theme::A1(), theme::A2(), 1.0f);
             }
         }
-        R().Text(L"Папка компонентов: " + util::BinDir(), fonts::TINY, 400, theme::textMute,
+        R().Text(TR(L"Папка компонентов: ") + util::BinDir(), fonts::TINY, 400, theme::textMute,
                  RectF(comp.x + gfx::S(26), comp.bottom() - gfx::S(22), W - gfx::S(52), gfx::S(18)),
                  Align::Left, VAlign::Middle, true);
         y += gfx::S(230);
@@ -1250,26 +1274,26 @@ static void DrawSettings(AppState& a, const RectF& clip) {
         ui::Card(3300, down, false, S(20));
         R().Text(L"Загрузки", fonts::H2, 600, theme::text, RectF(down.x + gfx::S(26), down.y + gfx::S(18), gfx::S(320), gfx::S(26)),
                  Align::Left, VAlign::Middle, false);
-        R().Text(L"Куда сохранять и как называть файлы", fonts::TINY, 400, theme::textMute,
+        R().Text(TR(L"Куда сохранять и как называть файлы"), fonts::TINY, 400, theme::textMute,
                  RectF(down.x + gfx::S(26), down.y + gfx::S(46), gfx::S(400), gfx::S(18)),
                  Align::Left, VAlign::Middle, true);
 
         float x = down.x + gfx::S(26);
         float ry = down.y + gfx::S(76);
-        R().Text(L"Папка загрузок", fonts::BODY, 400, theme::text, RectF(x, ry, gfx::S(160), gfx::S(22)),
+        R().Text(TR(L"Папка загрузок"), fonts::BODY, 400, theme::text, RectF(x, ry, gfx::S(160), gfx::S(22)),
                  Align::Left, VAlign::Middle, false);
         RectF dirBtn(down.right() - gfx::S(26) - gfx::S(40) - gfx::S(10), ry - gfx::S(4), gfx::S(40), gfx::S(40));
         RectF dirField(x + gfx::S(170), ry - gfx::S(4), dirBtn.x - (x + gfx::S(170)) - gfx::S(12), gfx::S(40));
         std::wstring dir = st.downloadDir;
-        ui::TextField(3310, dirField, dir, L"Папка");
+        ui::TextField(3310, dirField, dir, TR(L"Папка"));
         if (dir != st.downloadDir) { st.downloadDir = dir; dirty = true; }
-        if (ui::IconButton(3311, dirBtn, Icon::Folder, L"Обзор")) {
+        if (ui::IconButton(3311, dirBtn, Icon::Folder, TR(L"Обзор"))) {
             std::wstring pick = util::SelectFolderDialog(a.hwnd, st.downloadDir);
             if (!pick.empty()) { st.downloadDir = pick; util::EnsureDir(pick); dirty = true; }
         }
         ry += gfx::S(50);
 
-        R().Text(L"Шаблон имени", fonts::BODY, 400, theme::text, RectF(x, ry, gfx::S(160), gfx::S(22)),
+        R().Text(TR(L"Шаблон имени"), fonts::BODY, 400, theme::text, RectF(x, ry, gfx::S(160), gfx::S(22)),
                  Align::Left, VAlign::Middle, false);
         RectF tplField(x + gfx::S(170), ry - gfx::S(4), down.right() - gfx::S(26) - (x + gfx::S(170)), gfx::S(40));
         std::wstring tpl = st.fileTemplate;
@@ -1281,7 +1305,7 @@ static void DrawSettings(AppState& a, const RectF& clip) {
                  Align::Left, VAlign::Middle, true);
         ry += gfx::S(30);
 
-        R().Text(L"Одновременных загрузок", fonts::BODY, 400, theme::text, RectF(x, ry, gfx::S(200), gfx::S(22)),
+        R().Text(TR(L"Одновременных загрузок"), fonts::BODY, 400, theme::text, RectF(x, ry, gfx::S(200), gfx::S(22)),
                  Align::Left, VAlign::Middle, false);
         RectF minus(x + gfx::S(210), ry - gfx::S(4), gfx::S(36), gfx::S(36));
         RectF counter(minus.right() + gfx::S(5), ry - gfx::S(4), gfx::S(46), gfx::S(36));
@@ -1290,9 +1314,9 @@ static void DrawSettings(AppState& a, const RectF& clip) {
         R().Stroke(counter, gfx::S(10), theme::stroke, 1.0f);
         R().Text(std::to_wstring(st.maxParallel), fonts::BODY, 600, theme::text, counter,
                  Align::Center, VAlign::Middle, false);
-        if (ui::IconButton(3314, minus, Icon::Minus, L"Меньше")) { st.maxParallel = std::max(1, st.maxParallel - 1); dirty = true; }
-        if (ui::IconButton(3315, plus, Icon::Plus, L"Больше")) { st.maxParallel = std::min(8, st.maxParallel + 1); dirty = true; }
-        R().Text(L"Можно поставить в очередь сразу несколько ссылок", fonts::TINY, 400, theme::textMute,
+        if (ui::IconButton(3314, minus, Icon::Minus, TR(L"Меньше"))) { st.maxParallel = std::max(1, st.maxParallel - 1); dirty = true; }
+        if (ui::IconButton(3315, plus, Icon::Plus, TR(L"Больше"))) { st.maxParallel = std::min(8, st.maxParallel + 1); dirty = true; }
+        R().Text(TR(L"Можно поставить в очередь сразу несколько ссылок"), fonts::TINY, 400, theme::textMute,
                  RectF(x + gfx::S(360), ry, gfx::S(400), gfx::S(22)), Align::Left, VAlign::Middle, true);
         ry += gfx::S(46);
 
@@ -1304,27 +1328,27 @@ static void DrawSettings(AppState& a, const RectF& clip) {
                 dirty = true;
         };
         float colW = (down.w - gfx::S(52) - gfx::S(24)) / 2;
-        switchRow(x, ry, colW, L"Уведомления о завершении", st.notifications, Icon::Info, 3320);
-        switchRow(x + colW + gfx::S(24), ry, colW, L"Спрашивать перед выходом", st.confirmExit, Icon::Warn, 3321);
+        switchRow(x, ry, colW, TR(L"Уведомления о завершении"), st.notifications, Icon::Info, 3320);
+        switchRow(x + colW + gfx::S(24), ry, colW, TR(L"Спрашивать перед выходом"), st.confirmExit, Icon::Warn, 3321);
         ry += gfx::S(44);
-        switchRow(x, ry, colW, L"Сворачивать в трей вместо выхода", st.closeToTray, Icon::Queue, 3322);
+        switchRow(x, ry, colW, TR(L"Сворачивать в трей вместо выхода"), st.closeToTray, Icon::Queue, 3322);
         y += gfx::S(364);
 
         // ── Формат по умолчанию ──────────────────────────────────────────
-        RectF def(content.x, y, W, gfx::S(160));
+        RectF def(content.x, y, W, gfx::S(200));
         ui::Card(3400, def, false, S(20));
-        R().Text(L"Формат по умолчанию", fonts::H2, 600, theme::text, RectF(def.x + gfx::S(26), def.y + gfx::S(16), gfx::S(400), gfx::S(26)),
+        R().Text(TR(L"Формат по умолчанию"), fonts::H2, 600, theme::text, RectF(def.x + gfx::S(26), def.y + gfx::S(16), gfx::S(400), gfx::S(26)),
                  Align::Left, VAlign::Middle, false);
 
         float qx = def.x + gfx::S(26);
         float qy = def.y + gfx::S(52);
-        R().Text(L"Качество", fonts::TINY, 400, theme::textMute, RectF(qx, qy, gfx::S(100), gfx::S(16)),
+        R().Text(TR(L"Качество"), fonts::TINY, 400, theme::textMute, RectF(qx, qy, gfx::S(100), gfx::S(16)),
                  Align::Left, VAlign::Middle, false);
         std::vector<std::wstring> qs = { L"best", L"2160", L"1440", L"1080", L"720", L"480", L"360", L"audio" };
         Flow qf;
         qf.Init(RectF(qx, qy + gfx::S(20), W - gfx::S(52), 0), gfx::S(34), gfx::S(8));
         for (size_t i = 0; i < qs.size(); ++i) {
-            std::wstring label = (qs[i] == L"best") ? L"Максимум" : (qs[i] == L"audio" ? L"Аудио" : qs[i] + L"p");
+            std::wstring label = (qs[i] == L"best") ? TR(L"Максимум") : (qs[i] == L"audio" ? TR(L"Аудио") : qs[i] + L"p");
             float w = R().MeasureText(label, fonts::SMALL, 600) + gfx::S(36);
             if (ui::Chip(3410 + (int)i, qf.Take(w, gfx::S(34)), label, st.defaultQuality == qs[i])) {
                 st.defaultQuality = qs[i];
@@ -1333,30 +1357,30 @@ static void DrawSettings(AppState& a, const RectF& clip) {
         }
         qy = qf.Bottom() + gfx::S(12);
 
-        R().Text(L"Контейнер", fonts::TINY, 400, theme::textMute, RectF(qx, qy, gfx::S(100), gfx::S(16)),
+        R().Text(TR(L"Контейнер"), fonts::TINY, 400, theme::textMute, RectF(qx, qy, gfx::S(100), gfx::S(16)),
                  Align::Left, VAlign::Middle, false);
         std::vector<std::wstring> cs = { L"mp4", L"mkv", L"webm", L"auto" };
         Flow cf;
         cf.Init(RectF(qx, qy + gfx::S(20), W - gfx::S(52), 0), gfx::S(34), gfx::S(8));
         for (size_t i = 0; i < cs.size(); ++i) {
-            std::wstring label = (cs[i] == L"auto") ? L"Исходный" : util::ToUpper(cs[i]);
+            std::wstring label = (cs[i] == L"auto") ? TR(L"Исходный") : util::ToUpper(cs[i]);
             float w = R().MeasureText(label, fonts::SMALL, 600) + gfx::S(36);
             if (ui::Chip(3430 + (int)i, cf.Take(w, gfx::S(34)), label, st.defaultContainer == cs[i])) {
                 st.defaultContainer = cs[i];
                 dirty = true;
             }
         }
-        y += gfx::S(180);
+        y += gfx::S(220);
 
         // ── Интернет ─────────────────────────────────────────────────────
         RectF net(content.x, y, W, gfx::S(130));
         ui::Card(3500, net, false, S(20));
-        R().Text(L"Доступ к закрытым видео", fonts::H2, 600, theme::text, RectF(net.x + gfx::S(26), net.y + gfx::S(16), gfx::S(420), gfx::S(26)),
+        R().Text(TR(L"Доступ к закрытым видео"), fonts::H2, 600, theme::text, RectF(net.x + gfx::S(26), net.y + gfx::S(16), gfx::S(420), gfx::S(26)),
                  Align::Left, VAlign::Middle, false);
-        R().Text(L"Куки из вашего браузера помогают скачивать видео, требующие входа", fonts::TINY, 400,
+        R().Text(TR(L"Куки из вашего браузера помогают скачивать видео, требующие входа"), fonts::TINY, 400,
                  theme::textMute, RectF(net.x + gfx::S(26), net.y + gfx::S(44), gfx::S(600), gfx::S(18)),
                  Align::Left, VAlign::Middle, true);
-        R().Text(L"Использовать куки браузера", fonts::BODY, 400, theme::text,
+        R().Text(TR(L"Использовать куки браузера"), fonts::BODY, 400, theme::text,
                  RectF(net.x + gfx::S(26), net.y + gfx::S(72), gfx::S(260), gfx::S(30)),
                  Align::Left, VAlign::Middle, true);
         bool cb = st.cookiesFromBrowser;
@@ -1366,11 +1390,11 @@ static void DrawSettings(AppState& a, const RectF& clip) {
         y += gfx::S(150);
 
         // ── Интерфейс ────────────────────────────────────────────────────
-        RectF ui2(content.x, y, W, gfx::S(150));
+        RectF ui2(content.x, y, W, gfx::S(214));
         ui::Card(3600, ui2, false, S(20));
-        R().Text(L"Интерфейс", fonts::H2, 600, theme::text, RectF(ui2.x + gfx::S(26), ui2.y + gfx::S(16), gfx::S(420), gfx::S(26)),
+        R().Text(TR(L"Интерфейс"), fonts::H2, 600, theme::text, RectF(ui2.x + gfx::S(26), ui2.y + gfx::S(16), gfx::S(420), gfx::S(26)),
                  Align::Left, VAlign::Middle, false);
-        R().Text(L"Цветовая схема и анимации", fonts::TINY, 400, theme::textMute,
+        R().Text(TR(L"Цветовая схема и оформление"), fonts::TINY, 400, theme::textMute,
                  RectF(ui2.x + gfx::S(26), ui2.y + gfx::S(44), gfx::S(400), gfx::S(18)),
                  Align::Left, VAlign::Middle, true);
 
@@ -1400,35 +1424,49 @@ static void DrawSettings(AppState& a, const RectF& clip) {
             if (ui::Hover(dot)) ui::SetTooltip(dot, ap.name);
             ax += gfx::S(52);
         }
-        R().Text(L"Анимированный фон", fonts::BODY, 400, theme::text, RectF(ax + gfx::S(12), ay, gfx::S(170), gfx::S(40)),
-                 Align::Left, VAlign::Middle, true);
-        bool ab = st.animatedBackground;
-        if (ui::Toggle(3610, RectF(ui2.right() - gfx::S(78), ay + gfx::S(5), gfx::S(52), gfx::S(30)),
-                       st.animatedBackground, Icon::Sparkles) && ab != st.animatedBackground)
-            dirty = true;
-        y += gfx::S(170);
+
+        // ── Язык интерфейса ────────────────────────────────────────────────
+        float ly = ay + gfx::S(76);
+        R().Text(TR(L"Язык интерфейса"), fonts::BODY, 400, theme::text,
+                 RectF(ui2.x + gfx::S(26), ly, gfx::S(220), gfx::S(32)),
+                 Align::Left, VAlign::Middle, false);
+        {
+            const auto& langs = lang::List();
+            float lx = ui2.right() - gfx::S(26) - gfx::S(330);
+            for (size_t i = 0; i < langs.size(); ++i) {
+                const lang::Entry& e = langs[i];
+                float w = R().MeasureText(e.name, fonts::SMALL, 600) + gfx::S(36);
+                RectF cr = RectF(lx, ly + gfx::S(1), w, gfx::S(30));
+                if (ui::Chip(3620 + (int)i, cr, e.name, st.lang == (int)e.id)) {
+                    st.lang = (int)e.id;
+                    dirty = true;
+                }
+                lx += w + gfx::S(8);
+            }
+        }
+        y += gfx::S(234);
 
         // ── Данные ───────────────────────────────────────────────────────
         RectF data(content.x, y, W, gfx::S(130));
         ui::Card(3700, data, false, S(20));
-        R().Text(L"Данные программы", fonts::H2, 600, theme::text, RectF(data.x + gfx::S(26), data.y + gfx::S(16), gfx::S(420), gfx::S(26)),
+        R().Text(TR(L"Данные программы"), fonts::H2, 600, theme::text, RectF(data.x + gfx::S(26), data.y + gfx::S(16), gfx::S(420), gfx::S(26)),
                  Align::Left, VAlign::Middle, false);
-        R().Text(L"Настройки и история: " + util::AppDataDir(), fonts::TINY, 400, theme::textMute,
+        R().Text(TR(L"Настройки и история: ") + util::AppDataDir(), fonts::TINY, 400, theme::textMute,
                  RectF(data.x + gfx::S(26), data.y + gfx::S(44), gfx::S(660), gfx::S(18)),
                  Align::Left, VAlign::Middle, true);
         if (ui::Button(3710, RectF(data.x + gfx::S(26), data.y + gfx::S(72), gfx::S(200), gfx::S(40)),
-                       L"Открыть папку", Icon::Folder, ui::Btn::Soft))
+                       TR(L"Открыть папку"), Icon::Folder, ui::Btn::Soft))
             util::RevealInExplorer(util::AppDataDir());
         if (ui::Button(3711, RectF(data.x + gfx::S(236), data.y + gfx::S(72), gfx::S(200), gfx::S(40)),
-                       L"Сбросить настройки", Icon::Refresh, ui::Btn::Ghost)) {
-            if (MessageBoxW(a.hwnd, L"Сбросить все настройки к значениям по умолчанию?", L"LOADUCK",
+                       TR(L"Сбросить настройки"), Icon::Refresh, ui::Btn::Ghost)) {
+            if (MessageBoxW(a.hwnd, TR(L"Сбросить все настройки к значениям по умолчанию?"), L"LOADUCK",
                             MB_ICONQUESTION | MB_YESNO) == IDYES) {
                 Settings def2;
                 def2.downloadDir = st.downloadDir;
                 st = def2;
                 a.SyncFromSettings();
                 dirty = true;
-                toast::Show(L"Настройки сброшены", toast::Kind::Info);
+                toast::Show(TR(L"Настройки сброшены"), toast::Kind::Info);
             }
         }
         y += gfx::S(150);
@@ -1459,12 +1497,12 @@ void DrawStatusBar(AppState& a, const RectF& r) {
 
     struct Item { Icon ic; std::wstring text; Color c; };
     std::vector<Item> items = {
-        { Icon::Download,    running ? (std::to_wstring(running) + L" активных") : L"Готов",
+        { Icon::Download,    running ? (std::to_wstring(running) + TR(L" активных")) : TR(L"Готов"),
           running ? theme::A1() : theme::textMute },
-        { Icon::Queue,       L"в очереди " + std::to_wstring(queued), theme::textMute },
+        { Icon::Queue,       TR(L"в очереди ") + std::to_wstring(queued), theme::textMute },
         { Icon::Speed,       speed > 0 ? util::FormatSpeed(speed) : L"—", speed > 0 ? theme::success : theme::textMute },
-        { Icon::CheckCircle, doneBytes ? (util::FormatBytes(doneBytes) + L" скачано") : L"—", theme::textMute },
-        { Icon::Equalizer,   L"параллельно " + std::to_wstring(a.store.Get().maxParallel), theme::textMute },
+        { Icon::CheckCircle, doneBytes ? (util::FormatBytes(doneBytes) + TR(L" скачано")) : L"—", theme::textMute },
+        { Icon::Equalizer,   TR(L"параллельно ") + std::to_wstring(a.store.Get().maxParallel), theme::textMute },
     };
     float x = r.x + gfx::S(26);
     for (auto& it : items) {
@@ -1474,7 +1512,7 @@ void DrawStatusBar(AppState& a, const RectF& r) {
                  Align::Left, VAlign::Middle, false);
         x += tw + gfx::S(50);
     }
-    R().Text(L"Ctrl+V — вставить    ·    Ctrl+Enter — скачать    ·    Ctrl+1…4 — разделы",
+    R().Text(TR(L"Ctrl+V — вставить    ·    Ctrl+Enter — скачать    ·    Ctrl+1…4 — разделы"),
              fonts::TINY, 400, theme::textMute, RectF(r.x, y - gfx::S(10), r.w - gfx::S(26), gfx::S(20)),
              Align::Right, VAlign::Middle, false);
 }
