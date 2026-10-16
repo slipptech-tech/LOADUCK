@@ -107,15 +107,18 @@ Settings, download history, and logs are stored in `%LOCALAPPDATA%\LOADUCK`. You
 
 LOADUCK acts as a frontend for `yt-dlp`. Downloading copyrighted material may violate applicable laws. Only download content you have the right to access and save.
 
-
-<hr>
+---
 
 <p align="center">
   <a href="https://ko-fi.com/SlippTech">
     <img src="https://ko-fi.com/img/githubbutton_sm.svg"
          alt="Support me on Ko-fi"
-         width="260">
+         height="42">
+  </a>
+  &nbsp;&nbsp;
+  <a href="https://www.buymeacoffee.com/SLIPPTECH">
+    <img src="https://img.shields.io/badge/☕_Buy_Me_a_Coffee-Support_SlippTech-FFDD00?style=for-the-badge&logoColor=black&labelColor=FFDD00"
+         alt="Buy Me a Coffee"
+         height="42">
   </a>
 </p>
-
-
