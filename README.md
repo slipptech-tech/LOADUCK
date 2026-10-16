@@ -37,7 +37,7 @@ Features a dark UI, video previews, quality selection, download queue, and histo
 
 | | |
 |---|---|
-| OS | Windows 10 version 1809 or later (x64) |
+| OS | Windows 10/11 version 1809 or later (x64) |
 | Build | Visual Studio 2026 (MSVC 14.5x), C++20, Windows SDK 10.0.28000.0 |
 | Components | `bin\yt-dlp.exe` (required), `bin\ffmpeg.exe` (for merging media streams and embedding metadata) |
 
