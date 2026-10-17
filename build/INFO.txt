@@ -1,1 +1,0 @@
-Your assembled LOADUCK will be located here. You can delete the .pdb file before building.
