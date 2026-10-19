@@ -1,9 +1,4 @@
-
-<h1 align="center">LOADUCK</h1>
-
-<p align="center">
-  <strong>
-</p>
+ <h1 align="center">LOADUCK</h1>
 
 <p align="center">
   <img src="https://img.shields.io/badge/OPEN%20SOURCE-18181B?style=for-the-badge&logo=github&logoColor=white" alt="Open Source">
@@ -11,16 +6,28 @@
   <img src="https://img.shields.io/badge/C++-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++">
 </p>
 
-<p align="center">
-  <em>
-</p>
-
-
 A native Windows application (C++ / Win32) for downloading videos from YouTube, TikTok, and 20+ other services.
 
 Features a dark UI, video previews, quality selection, download queue, and history.
 
-![Interface](assets/screenshott.png)
+<p align="center">
+  <img src="assets/screenshott.png" alt="LOADUCK Interface" width="100%">
+</p>
+
+<details>
+<summary><strong>MORE PHOTOS</strong></summary>
+
+<br>
+
+<p align="center">
+  <img src="assets/screenshott2.png" alt="LOADUCK Screenshot 2" width="100%">
+</p>
+
+<p align="center">
+  <img src="assets/screenshott3.png" alt="LOADUCK Screenshot 3" width="100%">
+</p>
+
+</details>
 
 ## Features
 
@@ -111,14 +118,10 @@ LOADUCK acts as a frontend for `yt-dlp`. Downloading copyrighted material may vi
 
 <p align="center">
   <a href="https://ko-fi.com/SlippTech">
-    <img src="https://ko-fi.com/img/githubbutton_sm.svg"
-         alt="Support me on Ko-fi"
-         height="42">
+    <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi" height="42">
   </a>
   &nbsp;&nbsp;
   <a href="https://www.buymeacoffee.com/SLIPPTECH">
-    <img src="https://img.shields.io/badge/☕_Buy_Me_a_Coffee-Support_SlippTech-FFDD00?style=for-the-badge&logoColor=black&labelColor=FFDD00"
-         alt="Buy Me a Coffee"
-         height="42">
+    <img src="https://img.shields.io/badge/☕%20Buy%20Me%20a%20Coffee-Support%20SlippTech-FFDD00?style=for-the-badge&logoColor=black&labelColor=FFDD00" alt="Buy Me a Coffee" height="42">
   </a>
 </p>
