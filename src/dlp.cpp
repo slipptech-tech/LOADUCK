@@ -2,6 +2,7 @@
 #include "util.h"
 #include "render.h"
 #include "json.h"
+#include "lang.h"
 
 #include <Windows.h>
 #include <winhttp.h>
@@ -11,6 +12,8 @@
 #include <cstdlib>
 #include <set>
 #include <sstream>
+#include <deque>
+#include <condition_variable>
 
 #pragma comment(lib, "winhttp.lib")
 
@@ -207,7 +210,7 @@ static void AppendCookieHint(std::wstring& err, bool cookiesEnabled) {
 
 Job::Job(JobOptions opt) : opt_(std::move(opt)) {
     createdAt_ = (double)GetTickCount64();
-    prog_.stage = L"В очереди";
+    prog_.stage = TR(L"В очереди");
 }
 
 Job::~Job() {
@@ -230,7 +233,7 @@ void Job::Start(const std::wstring& exePath) {
         paused_ = false;
         state_ = JobState::Running;
         prog_ = JobProgress();
-        prog_.stage = L"Подготовка";
+        prog_.stage = TR(L"Подготовка");
         error_.clear();
         pid_ = 0;
         notified_ = false;
@@ -245,8 +248,8 @@ void Job::Run() {
     if (exe.empty() || !util::FileExists(exe)) {
         std::lock_guard<std::mutex> lk(mu_);
         state_ = JobState::Failed;
-        prog_.stage = L"Ошибка";
-        error_ = L"Не найден yt-dlp.exe. Установите компоненты в настройках.";
+        prog_.stage = TR(L"Ошибка");
+        error_ = TR(L"Не найден yt-dlp.exe. Установите компоненты в настройках.");
         return;
     }
 
@@ -295,8 +298,8 @@ void Job::Run() {
     if (!proc.Start(exe, args)) {
         std::lock_guard<std::mutex> lk(mu_);
         state_ = JobState::Failed;
-        prog_.stage = L"Ошибка";
-        error_ = L"Не удалось запустить yt-dlp";
+        prog_.stage = TR(L"Ошибка");
+        error_ = TR(L"Не удалось запустить yt-dlp");
         return;
     }
     { std::lock_guard<std::mutex> lk(mu_); pid_ = proc.pid; }
@@ -318,12 +321,12 @@ void Job::Run() {
                 prog_.eta = ParseEta(parts[4]);
                 if (prog_.total > 0) prog_.pct = std::min(1.0, (double)prog_.downloaded / (double)prog_.total);
                 else prog_.pct = std::min(prog_.pct + 0.0002, 0.999);
-                prog_.stage = L"Загрузка";
+                prog_.stage = TR(L"Загрузка");
             }
             return;
         }
         if (line.rfind("LUPP@@", 0) == 0) {
-            prog_.stage = L"Обработка";
+            prog_.stage = TR(L"Обработка");
             return;
         }
         if (line.rfind("LU@@", 0) == 0) {
@@ -344,10 +347,10 @@ void Job::Run() {
             return;
         }
         if (!line.empty() && line[0] == '[') {
-            if (line.find("Merger") != std::string::npos) prog_.stage = L"Объединение дорожек";
-            else if (line.find("ExtractAudio") != std::string::npos) prog_.stage = L"Извлечение аудио";
-            else if (line.find("Subtitle") != std::string::npos) prog_.stage = L"Субтитры";
-            else if (line.find("Writing") != std::string::npos) prog_.stage = L"Сохранение";
+            if (line.find("Merger") != std::string::npos) prog_.stage = TR(L"Объединение дорожек");
+            else if (line.find("ExtractAudio") != std::string::npos) prog_.stage = TR(L"Извлечение аудио");
+            else if (line.find("Subtitle") != std::string::npos) prog_.stage = TR(L"Субтитры");
+            else if (line.find("Writing") != std::string::npos) prog_.stage = TR(L"Сохранение");
         }
     };
 
@@ -364,7 +367,7 @@ void Job::Run() {
             {
                 std::lock_guard<std::mutex> lk(mu_);
                 prog_ = JobProgress();
-                prog_.stage = L"Повтор без куков";
+                prog_.stage = TR(L"Повтор без куков");
             }
             Proc retry;
             if (retry.Start(exe, args)) {
@@ -378,7 +381,7 @@ void Job::Run() {
     pid_ = 0;
     if (cancelRequested_) {
         state_ = paused_ ? JobState::Paused : JobState::Canceled;
-        prog_.stage = paused_ ? L"На паузе" : L"Отменено";
+        prog_.stage = paused_ ? TR(L"На паузе") : TR(L"Отменено");
         return;
     }
     if (code == 0) {
@@ -386,7 +389,7 @@ void Job::Run() {
         prog_.pct = 1.0;
         prog_.speed = 0;
         prog_.eta = 0;
-        prog_.stage = L"Готово";
+        prog_.stage = TR(L"Готово");
     } else {
         // Файл мог скачаться, а сломаться постобработка (метаданные, обложка).
         std::wstring warn = util::Utf8ToWide(errTail);
@@ -400,17 +403,17 @@ void Job::Run() {
             prog_.pct = 1.0;
             prog_.speed = 0;
             prog_.eta = 0;
-            prog_.stage = L"Готово без метаданных";
+            prog_.stage = TR(L"Готово без метаданных");
             if (warn.size() > 160) warn.resize(160);
             error_ = warn;   // показываем как предупреждение
         } else {
             state_ = JobState::Failed;
-            prog_.stage = L"Ошибка";
+            prog_.stage = TR(L"Ошибка");
             error_ = warn;
             AppendCookieHint(error_, withCookies);
             if (error_.size() > 700) error_ = error_.substr(error_.size() - 700);
         }
-        if (error_.empty()) error_ = L"yt-dlp завершился с кодом " + std::to_wstring(code);
+        if (error_.empty()) error_ = TR(L"yt-dlp завершился с кодом ") + std::to_wstring(code);
     }
 }
 
@@ -483,12 +486,16 @@ std::string RunCapture(const std::wstring& exe, const std::wstring& args, int* e
         if (exitCode) *exitCode = -1;
         return {};
     }
-    PipeReader rd;
-    rd.maxTail = 0;   // ответ целиком: -J может вернуть несколько мегабайт
-    rd.Run(p.readOut, nullptr, &out);
-    std::thread t([&] { PipeReader e; e.Run(p.readErr, nullptr, &errTail); });
+    // Обе трубы читаются одновременно. Иначе yt-dlp, застряв на записи в
+    // stderr (буфер 64 КБ переполнился), никогда не закроет stdout — и вызов
+    // повиснет навсегда. Для больших ответов это происходит легко.
+    PipeReader r1, r2;
+    r1.maxTail = 0;   // ответ целиком: -J может вернуть несколько мегабайт
+    std::thread t1([&] { r1.Run(p.readOut, nullptr, &out); });
+    std::thread t2([&] { r2.Run(p.readErr, nullptr, &errTail); });
+    t1.join();
+    t2.join();
     int code = p.Wait();
-    t.join();
     if (exitCode) *exitCode = code;
     if (maxBytes && out.size() > maxBytes) out.resize(maxBytes);
     return out;
@@ -507,7 +514,7 @@ bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err,
     out = MediaInfo();
     std::wstring exe = ResolveTool(L"", L"yt-dlp.exe");
     if (exe.empty()) {
-        err = L"Не найден yt-dlp.exe. Откройте «Настройки» и установите компоненты.";
+        err = TR(L"Не найден yt-dlp.exe. Откройте «Настройки» и установите компоненты.");
         return false;
     }
 
@@ -545,7 +552,7 @@ bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err,
 
     Json j;
     if (!Json::Parse(text, j) || !j.isObj()) {
-        err = L"Не удалось разобрать ответ yt-dlp";
+        err = TR(L"Не удалось разобрать ответ yt-dlp");
         return false;
     }
 
@@ -628,6 +635,10 @@ bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err,
                 heights264.insert(mf.height);
                 out.hasH264 = true;
             }
+            else if (vc.rfind("vp9", 0) == 0 || vc.rfind("vp09", 0) == 0)
+                out.hasVP9 = true;                  // vp9 / vp09 — до 4K, контейнер webm
+            else if (vc.rfind("av01", 0) == 0 || vc.rfind("av1", 0) == 0)
+                out.hasAV1 = true;                  // av01 — до 8K, контейнер mp4
         }
         out.formats.push_back(mf);
     }
@@ -642,7 +653,7 @@ bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err,
     if (out.title.empty() && out.isPlaylist && j["entries"].isArr())
         out.playlistCount = (int)j["entries"].size();
     if (out.title.empty()) {
-        err = L"Ссылка не содержит доступного видео";
+        err = TR(L"Ссылка не содержит доступного видео");
         return false;
     }
     return true;
@@ -669,7 +680,7 @@ bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err,
     uc.lpszUrlPath = path;
     uc.dwUrlPathLength = ARRAYSIZE(path);
     if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) {
-        if (errOut) *errOut = L"Некорректный адрес";
+        if (errOut) *errOut = TR(L"Некорректный адрес");
         WinHttpCloseHandle(session);
         return false;
     }
@@ -677,7 +688,7 @@ bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err,
 
     HINTERNET conn = WinHttpConnect(session, host, uc.nPort, 0);
     if (!conn) {
-        if (errOut) *errOut = L"Не удалось подключиться к серверу";
+        if (errOut) *errOut = TR(L"Не удалось подключиться к серверу");
         WinHttpCloseHandle(session);
         return false;
     }
@@ -708,7 +719,7 @@ bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err,
     BOOL okRecv = WinHttpReceiveResponse(req, nullptr);
     bool ok = okSend && okRecv;
     if (!ok) {
-        if (errOut) *errOut = L"Сервер не ответил";
+        if (errOut) *errOut = TR(L"Сервер не ответил");
         WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(session);
         return false;
     }
@@ -716,7 +727,7 @@ bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err,
     WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                         WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX);
     if (status != 200) {
-        if (errOut) *errOut = L"Сервер ответил кодом " + std::to_wstring(status);
+        if (errOut) *errOut = TR(L"Сервер ответил кодом ") + std::to_wstring(status);
         WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(session);
         return false;
     }
@@ -732,7 +743,7 @@ bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err,
     for (;;) {
         DWORD read = 0;
         if (!WinHttpReadData(req, chunk.data(), CHUNK, &read)) {
-            if (errOut) *errOut = L"Ошибка при загрузке данных";
+            if (errOut) *errOut = TR(L"Ошибка при загрузке данных");
             WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(session);
             return false;
         }
@@ -756,7 +767,7 @@ void StartComponentDownload(const std::wstring& url, const std::wstring& dest,
     state->ok = false;
     state->received = 0;
     state->total = 0;
-    state->message = L"Подключение…";
+    state->message = TR(L"Подключение…");
 
     std::thread([url, dest, state] {
         util::EnsureDir(util::DirName(dest));
@@ -771,7 +782,7 @@ void StartComponentDownload(const std::wstring& url, const std::wstring& dest,
                           },
                           &err);
         if (!ok || data.empty()) {
-            state->message = err.empty() ? L"Не удалось скачать файл" : err;
+            state->message = err.empty() ? TR(L"Не удалось скачать файл") : err;
             state->done = true;
             state->ok = false;
             state->running = false;
@@ -779,7 +790,7 @@ void StartComponentDownload(const std::wstring& url, const std::wstring& dest,
         }
         HANDLE f = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (f == INVALID_HANDLE_VALUE) {
-            state->message = L"Не удалось создать файл";
+            state->message = TR(L"Не удалось создать файл");
             state->done = true;
             state->ok = false;
             state->running = false;
@@ -791,7 +802,7 @@ void StartComponentDownload(const std::wstring& url, const std::wstring& dest,
         MoveFileExW(tmp.c_str(), dest.c_str(), MOVEFILE_REPLACE_EXISTING);
         state->received = data.size();
         state->total = data.size();
-        state->message = L"Готово";
+        state->message = TR(L"Готово");
         state->ok = true;
         state->done = true;
         state->running = false;
@@ -800,6 +811,41 @@ void StartComponentDownload(const std::wstring& url, const std::wstring& dest,
 
 static std::set<std::wstring> g_fetching;
 static std::mutex g_fetchMu;
+static std::deque<std::wstring> g_imageQueue;
+static std::condition_variable g_imageCv;
+static std::vector<std::thread> g_imageWorkers;
+static bool g_imagePoolStarted = false;
+
+// Очередь с ограничением параллелизма. Раньше на каждое изображение создавался
+// свой поток: при списке из сотни роликов это десятки одновременных TLS-соединений,
+// и картинки приходили медленнее, чем при последовательной загрузке.
+static void EnsureImagePool() {
+    if (g_imagePoolStarted) return;
+    g_imagePoolStarted = true;
+    for (int i = 0; i < 4; ++i) {
+        g_imageWorkers.emplace_back([] {
+            for (;;) {
+                std::wstring url;
+                {
+                    std::unique_lock<std::mutex> lk(g_fetchMu);
+                    g_imageCv.wait(lk, [] { return !g_imageQueue.empty(); });
+                    url = g_imageQueue.front();
+                    g_imageQueue.pop_front();
+                }
+                std::vector<uint8_t> data;
+                uint64_t total = 0;
+                std::wstring err;
+                if (HttpGet(url, &data, &total, nullptr, &err) && !data.empty() &&
+                    data.size() < 12u * 1024 * 1024) {
+                    GfxImage img;
+                    if (img.Load(data)) ImageCache::Put(url, std::move(img));
+                }
+                std::lock_guard<std::mutex> lk(g_fetchMu);
+                g_fetching.erase(url);
+            }
+        });
+    }
+}
 
 void FetchImage(const std::wstring& url) {
     if (url.empty()) return;
@@ -808,18 +854,12 @@ void FetchImage(const std::wstring& url) {
         if (ImageCache::Get(url)) return;
         if (g_fetching.count(url)) return;
         g_fetching.insert(url);
+        EnsureImagePool();
+        // Новые картинки важнее: показываем их в начало очереди, чтобы при
+        // прокрутке первым делом подгружалось то, что сейчас на экране.
+        g_imageQueue.push_front(url);
     }
-    std::thread([url] {
-        std::vector<uint8_t> data;
-        uint64_t total = 0;
-        std::wstring err;
-        if (HttpGet(url, &data, &total, nullptr, &err) && !data.empty() && data.size() < 12u * 1024 * 1024) {
-            GfxImage img;
-            if (img.Load(data)) ImageCache::Put(url, std::move(img));
-        }
-        std::lock_guard<std::mutex> lk(g_fetchMu);
-        g_fetching.erase(url);
-    }).detach();
+    g_imageCv.notify_one();
 }
 
 std::string NormalizeExt(const std::string& ext) {
@@ -828,8 +868,186 @@ std::string NormalizeExt(const std::string& ext) {
     return e;
 }
 
+// ── Каналы ────────────────────────────────────────────────────────────────
+
+std::wstring NormalizeChannelUrl(const std::wstring& input) {
+    std::wstring s = util::Trim(input);
+    if (s.empty()) return {};
+    // Голое имя вида «@something» или «something»
+    if (s[0] == L'@') return L"https://www.youtube.com/" + s + L"/videos";
+    if (s.find(L"://") == std::wstring::npos && s.find(L'.') == std::wstring::npos)
+        return L"https://www.youtube.com/@" + s + L"/videos";
+    // Ссылка на конкретный ролик — каналом её считать бессмысленно
+    if (util::CleanUrl(s).find(L"/watch") != std::wstring::npos) return {};
+    return s;
+}
+
+bool ProbeChannel(const std::wstring& url, ChannelInfo& out, std::wstring& err,
+                  bool useCookies, const std::wstring& browser, int maxVideos) {
+    out = ChannelInfo();
+    std::wstring exe = ResolveTool(L"", L"yt-dlp.exe");
+    if (exe.empty()) {
+        err = TR(L"Не найден yt-dlp.exe. Откройте «Настройки» и установите компоненты.");
+        return false;
+    }
+
+    const bool wantCookies = useCookies && !browser.empty() && util::BrowserInstalled(browser);
+    std::wstring cookieArg = wantCookies ? (L"--cookies-from-browser " + browser + L" ") : L"";
+
+    // Плоский разбор: список роликов приходит сразу, без скачивания каждого
+    // ролика целиком — иначе канал из тысячи видео не откроется никогда.
+    // Пробел в конце обязателен: куки подставляются между блоками, и без него
+    // флаги склеились бы в один несуществующий аргумент.
+    const std::wstring base =
+        L"--flat-playlist --no-warnings --no-color --ignore-config --dump-single-json ";
+    std::wstring limit = L"--playlist-end " + std::to_wstring(maxVideos) + L" ";
+
+    std::string text;
+    int code = 0;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        text = RunCapture(exe, base + cookieArg + limit + L"\"" + url + L"\"", &code,
+                          64u * 1024 * 1024);
+        if (code == 0 && !text.empty()) break;
+        if (cookieArg.empty()) break;
+        // Куки не сработали (браузер открыт) — повторяем без них
+        cookieArg.clear();
+    }
+
+    if (code != 0 || text.empty() || text.compare(0, 4, "null") == 0) {
+        // Повторный запрос — только ради текста ошибки. Он обязан быть быстрым:
+        // без --flat-playlist yt-dlp начал бы выкачивать весь канал целиком,
+        // и на крупном канале это висело бы минутами.
+        std::string errText;
+        Proc p;
+        const std::wstring errArgs = L"--no-color --ignore-config --flat-playlist "
+                                     L"--playlist-end 1 --simulate \"" + url + L"\"";
+        if (p.Start(exe, errArgs)) {
+            PumpAndWait(p, nullptr, &errText);
+        }
+        std::string tail = errText;
+        size_t pos = tail.find("ERROR:");
+        if (pos != std::string::npos) tail = tail.substr(pos);
+        if (tail.empty()) tail = "yt-dlp не смог открыть канал (код " + std::to_string(code) + ")";
+        err = util::Utf8ToWide(tail.substr(0, 600));
+        AppendCookieHint(err, useCookies);
+        return false;
+    }
+
+    Json j;
+    if (!Json::Parse(text, j) || !j.isObj()) {
+        err = TR(L"Не удалось разобрать ответ yt-dlp");
+        return false;
+    }
+
+    // Название: у вкладки канала оно «Имя - Videos», убираем хвост.
+    std::string title = j["channel"].asStr();
+    if (title.empty()) title = j["title"].asStr();
+    if (title.empty()) title = j["uploader"].asStr();
+    if (!title.empty()) {
+        static const char* kTails[] = { " - Videos", " - видео", " - Shorts", " - shorts" };
+        for (const char* t : kTails) {
+            size_t tl = strlen(t);
+            if (title.size() > tl && title.compare(title.size() - tl, tl, t) == 0) {
+                title.resize(title.size() - tl);
+                break;
+            }
+        }
+    }
+
+    out.title = title;
+    out.handle = j["uploader_id"].asStr();
+    if (out.handle.empty()) out.handle = j["channel_id"].asStr();
+    out.url = j["channel_url"].asStr();
+    if (out.url.empty()) out.url = j["webpage_url"].asStr();
+    out.description = j["description"].asStr();
+
+    const Json& fol = j["channel_follower_count"];
+    if (fol.isNum()) {
+        out.followers = fol.asInt(0);
+        out.followersKnown = out.followers > 0;
+    }
+
+    // Аватар: берём самый крупный кадр из превью канала.
+    const Json& th = j["thumbnails"];
+    std::string best;
+    for (size_t i = 0; i < th.size(); ++i) {
+        std::string u = th[i]["url"].asStr();
+        long long w = th[i]["width"].asInt(0);
+        if (u.empty()) continue;
+        if (best.empty() || w > 0) best = u;   // yt3 отдаёт по убыванию размера
+    }
+    out.avatar = best;
+
+    const Json& entries = j["entries"];
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const Json& e = entries[i];
+        ChannelVideo v;
+        v.id = e["id"].asStr();
+        v.url = e["url"].asStr();
+        v.title = e["title"].asStr();
+        v.duration = e["duration"].asNum(0);
+        v.views = e["view_count"].asInt(0);
+        if (v.title.empty() || v.url.empty()) continue;
+        // Плоский разбор не отдаёт превью — у YouTube его легко восстановить
+        // по идентификатору ролика, у остальных площадок остаётся заглушка.
+        const Json& eth = e["thumbnails"];
+        if (eth.size() > 0) {
+            for (size_t k = 0; k < eth.size(); ++k) {
+                std::string u = eth[k]["url"].asStr();
+                if (u.empty()) continue;
+                if (v.thumbnail.empty() || eth[k]["width"].asInt(0) > 320) v.thumbnail = u;
+            }
+        }
+        if (v.thumbnail.empty() && v.id.size() >= 11)
+            v.thumbnail = "https://i.ytimg.com/vi/" + v.id + "/hqdefault.jpg";
+        if (v.views == 0) v.views = e["view_count"].asInt(0);
+        out.videos.push_back(std::move(v));
+    }
+
+    if (out.title.empty() && out.videos.empty()) {
+        err = TR(L"Канал не найден или он пуст");
+        return false;
+    }
+    if (out.title.empty()) out.title = out.handle;
+    return true;
+}
+
+// Лайки и просмотры одного ролика. Плоский разбор канала их не возвращает —
+// они живут в полном -J, поэтому запрашиваются отдельно и только для видимых строк.
+VideoStats ProbeVideoStats(const std::wstring& url, bool useCookies, const std::wstring& browser) {
+    VideoStats st;
+    std::wstring exe = ResolveTool(L"", L"yt-dlp.exe");
+    if (exe.empty()) return st;
+    const bool wantCookies = useCookies && !browser.empty() && util::BrowserInstalled(browser);
+    const std::wstring cookieArg = wantCookies ? (L" --cookies-from-browser " + browser) : L"";
+
+    // Только нужные поля: -J тянет полный список форматов и тормозит в разы.
+    const std::wstring args = L"--no-playlist --no-warnings --no-color --ignore-config " +
+                              cookieArg + L"--skip-download --print %(view_count)s --print %(like_count)s "
+                              L"\"" + url + L"\"";
+    int code = 0;
+    std::string out = RunCapture(exe, args, &code, 4096);
+    if (code != 0 || out.empty()) return st;
+
+    std::vector<std::string> nums;
+    size_t pos = 0;
+    while (pos < out.size() && nums.size() < 2) {
+        size_t nl = out.find('\n', pos);
+        if (nl == std::string::npos) nl = out.size();
+        std::string line = out.substr(pos, nl - pos);
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\n'))
+            line.pop_back();
+        if (!line.empty() && line != "NA" && line != "None") nums.push_back(line);
+        pos = nl + 1;
+    }
+    if (nums.size() > 0) st.views = strtoll(nums[0].c_str(), nullptr, 10);
+    if (nums.size() > 1) st.likes = strtoll(nums[1].c_str(), nullptr, 10);
+    st.ok = st.views > 0 || st.likes > 0;
+    return st;
+}
+
 std::string FormatSelector(const std::wstring& quality, const std::wstring& container,
-                          const std::wstring& exactFormatId, bool preferH264) {
+                           const std::wstring& exactFormatId, const std::wstring& codec) {
     if (!exactFormatId.empty()) return util::WideToUtf8(exactFormatId) + "+bestaudio/best";
 
     std::string q = util::WideToUtf8(quality);
@@ -840,21 +1058,30 @@ std::string FormatSelector(const std::wstring& quality, const std::wstring& cont
 
     std::string h;
     if (q != "best" && !q.empty()) h = "[height<=" + q + "]";
-
-    // Совместимый режим: H.264 + AAC — такой файл открывает любой системный плеер.
-    // Без него «Максимум» уводит в AV1/VP9, которые штатный плеер Windows не декодирует.
-    //
-    // Важный нюанс: YouTube отдаёт H.264 только до 1080p, 4K существует исключительно
-    // в VP9/AV1. Поэтому при запросе выше 1080 ограничение по кодеку снимается —
-    // иначе 4K был бы недостижим в принципе, и это молчало бы о том, что выбор
-    // качества ничего не решает.
     const int wantH = (q == "best" || q.empty()) ? 0 : atoi(q.c_str());
-    const bool forceH264 = preferH264 && wantH <= 1080;
 
-    if (forceH264) {
-        std::string v = "bestvideo" + h + "[ext=mp4][vcodec~='^(avc|h264)']";
+    // Выбор кодека. H.264 открывает любой системный плеер, но выше 1080p его
+    // на YouTube не бывает. 2K/4K существуют только в VP9 (webm) и AV1 (mp4),
+    // поэтому их приходится предлагать явно.
+    std::string cf;                      // фильтр по кодеку видеодорожки
+    if (codec == L"h264")        cf = "[vcodec~='^(avc|h264)']";
+    else if (codec == L"vp9")    cf = "[vcodec~='^vp0?9']";
+    else if (codec == L"av1")    cf = "[vcodec~='^(av01|av1)']";
+    else if (wantH > 1080)       cf = "[vcodec~='^(av01|av1)']";   // авто: 2K/4K
+    else                         cf = "[vcodec~='^(avc|h264)']";   // авто: совместимость
+
+    // VP9 в контейнере mp4 не встречается — YouTube отдаёт его только в webm.
+    // Молча менять контейнер нельзя, но и присылать заведомо пустой запрос тоже:
+    // оставляем как есть, тогда сработает запасная цепочка внизу.
+    const bool vp9InMp4 = (codec == L"vp9") && (c == "mp4");
+
+    if (!cf.empty() && !vp9InMp4) {
+        const std::string v = "bestvideo" + h + cf;
+        if (c == "webm")
+            return v + "+bestaudio[ext=webm]/" + v + "+bestaudio/best" + h + "/best" + h;
         if (c == "mp4" || c == "auto" || c.empty())
-            return v + "+bestaudio[ext=m4a]/" + v + "+bestaudio/best" + h + "/best" + h + "[ext=mp4]/best" + h;
+            return v + "[ext=mp4]+bestaudio[ext=m4a]/" + v + "+bestaudio/best" + h +
+                   "/best" + h + "[ext=mp4]/best" + h;
         return v + "+bestaudio/best" + h;
     }
 

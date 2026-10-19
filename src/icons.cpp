@@ -333,6 +333,13 @@ void Draw(Renderer& r, Icon id, const RectF& dst, Color c, float weight) {
             p.L(16, 14, 19.5f, 14);
             p.L(19.5f, 11.5f, 19.5f, 14);
             break;
+        case Icon::Playlist: {
+            // Стопка карточек: канал с его роликами
+            p.RRect(3.5f, 3.5f, 17, 17, 2.6f);
+            p.RRect(6.5f, 6.5f, 11, 11, 2.2f);
+            p.L(9.5f, 9.5f, 14.5f, 14.5f);
+            break;
+        }
         case Icon::Telegram: {
             // Фирменный знак: бумажный самолётик носом вправо-вверх со сгибом
             // и килем. Обводка идёт по контуру, поэтому заливки не нужно.

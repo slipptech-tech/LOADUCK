@@ -79,6 +79,7 @@ static uint64_t EstimateSize(const MediaInfo& info, const std::wstring& quality,
 static const wchar_t* PageTitle(Page p) {
     switch (p) {
         case Page::Home: return TR(L"Загрузка видео");
+        case Page::Channels: return TR(L"Каналы");
         case Page::Downloads: return TR(L"Очередь загрузок");
         case Page::History: return TR(L"История");
         default: return TR(L"Настройки");
@@ -88,6 +89,7 @@ static const wchar_t* PageTitle(Page p) {
 static const wchar_t* PageSubtitle(Page p) {
     switch (p) {
         case Page::Home: return TR(L"YouTube, TikTok, Instagram, X, Twitch и ещё 20+ сервисов");
+        case Page::Channels: return TR(L"Аватар, подписчики и все ролики канала");
         case Page::Downloads: return TR(L"Активные, завершённые и ошибочные загрузки");
         case Page::History: return TR(L"Все файлы, скачанные ранее");
         default: return TR(L"Компоненты, папки и поведение программы");
@@ -205,14 +207,15 @@ void DrawSidebar(AppState& a, const RectF& r) {
     }
 
     struct NavItem { Page page; Icon ic; const wchar_t* label; int badge; };
-    NavItem items[4] = {
+    NavItem items[5] = {
         { Page::Home,      Icon::Home,    TR(L"Загрузка"),  0 },
+        { Page::Channels,  Icon::Playlist,TR(L"Каналы"),     0 },
         { Page::Downloads, Icon::Queue,   TR(L"Очередь"),   activeJobs },
         { Page::History,   Icon::History, TR(L"История"),   0 },
         { Page::Settings,  Icon::Settings,TR(L"Настройки"), 0 },
     };
 
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
         float h = S(48);
         RectF ir(r.x + pad, y, r.w - pad * 2, h);
         bool sel = a.page == items[i].page;
@@ -234,7 +237,7 @@ void DrawSidebar(AppState& a, const RectF& r) {
                  RectF(ir.x + S(45), ir.y, ir.w - S(86), h), Align::Left, VAlign::Middle, false);
 
         int badge = items[i].badge;
-        if (i == 2) badge = (int)a.store.HistorySize();
+        if (i == 3) badge = (int)a.store.HistorySize();
         if (badge > 0) {
             std::wstring bt = badge > 99 ? L"99+" : std::to_wstring(badge);
             float bwd = R().MeasureText(bt, fonts::TINY, 600) + gfx::S(14);
@@ -447,7 +450,8 @@ static float MediaCardHeight(const MediaInfo& info, float width) {
     int maxH = 0;
     for (int h : info.heights) maxH = std::max(maxH, h);
     float hint = (info.hasH264 && maxH > 1080) ? S(22) : 0.f;
-    return S(328) + rows * S(40) + hint;
+    // + ряд выбора кодека (подпись + чипы)
+    return S(328) + rows * S(40) + hint + S(84);
 }
 
 static void DrawMediaCard(AppState& a, const RectF& r) {
@@ -648,6 +652,59 @@ static void DrawMediaCard(AppState& a, const RectF& r) {
             if (a.audioOnly) a.audioFormat = opts[i];
             else a.container = opts[i];
         }
+    }
+    cy = flow2.Bottom();
+
+    // ── Кодек видео ──────────────────────────────────────────────────────
+    // H.264 открывает любой системный плеер, но выше 1080p его нет. 2K/4K
+    // лежат только в VP9 (webm) и AV1 (mp4) — поэтому кодек выбирается явно.
+    if (!a.audioOnly) {
+        cy += gfx::S(24);
+        R().Text(TR(L"Кодек"), fonts::H3, 600, theme::textDim,
+                 RectF(x, cy, gfx::S(240), gfx::S(20)), Align::Left, VAlign::Middle, false);
+
+        struct C { const wchar_t* id; const wchar_t* name; bool avail; const wchar_t* note; };
+        std::vector<C> codecs = {
+            { L"auto", TR(L"Авто"),    true,                       TR(L"H.264 до 1080p, выше — AV1") },
+            { L"h264", L"H.264",       info.hasH264,               TR(L"Любой плеер, только до 1080p") },
+            { L"vp9",   L"VP9",        info.hasVP9,                TR(L"2K/4K, контейнер webm") },
+            { L"av1",   L"AV1",        info.hasAV1,                TR(L"2K/4K/8K, контейнер mp4") },
+        };
+        float availW = 0;
+        for (const C& c : codecs) {
+            float cw = R().MeasureText(c.note, fonts::TINY, 400) + gfx::S(10);
+            if (availW < cw) availW = cw;
+        }
+
+        Flow flow3;
+        flow3.Init(RectF(x, cy + gfx::S(26), right - x - availW - gfx::S(20), 0), gfx::S(34), gfx::S(8));
+        for (size_t i = 0; i < codecs.size(); ++i) {
+            float w = R().MeasureText(codecs[i].name, fonts::SMALL, 600) + gfx::S(46);
+            RectF cr = flow3.Take(w, gfx::S(34));
+            bool sel = (a.codec == codecs[i].id);
+            if (ui::Chip(1470 + (int)i, cr, codecs[i].name, sel, Icon::Video)) {
+                a.codec = codecs[i].id;
+                a.store.Get().codec = codecs[i].id;
+                a.store.Save();
+                // Высокие разрешения без H.264: снимаем обещание совместимости
+                if (a.preferH264 && a.quality != L"best" && a.quality != L"audio" &&
+                    _wtoi(a.quality.c_str()) > 1080) {
+                    a.preferH264 = false;
+                    a.store.Get().preferH264 = false;
+                    a.store.Save();
+                }
+            }
+        }
+        // Подсказка справа от ряда — почему так, а не иначе
+        const wchar_t* note = nullptr;
+        for (const C& c : codecs) if (a.codec == c.id) note = c.note;
+        if (note) {
+            float nw = R().MeasureText(note, fonts::TINY, 400);
+            R().Text(note, fonts::TINY, 400, theme::textMute,
+                     RectF(right - nw, cy + gfx::S(26), nw + gfx::S(6), gfx::S(34)),
+                     Align::Right, VAlign::Middle, false);
+        }
+        cy = flow3.Bottom();
     }
 }
 
@@ -1624,6 +1681,257 @@ void DrawStatusBar(AppState& a, const RectF& r) {
              Align::Right, VAlign::Middle, false);
 }
 
+// ── Каналы ────────────────────────────────────────────────────────────────
+
+// Круглая аватарка канала. Превью у YouTube приходят «конвертом» (широкая
+// полоса-баннер), поэтому берём центральный квадрат и обрезаем по кругу.
+static void DrawAvatar(const RectF& box, const std::string& avatarUrl, const std::wstring& fallback) {
+    std::wstring url = util::Utf8ToWide(avatarUrl);
+    engine::FetchImage(url);
+    GfxImage* img = ImageCache::Get(url);
+    const float rad = box.w * 0.5f;
+
+    R().FillRound(box, rad, theme::surfaceAlt);
+    if (img && img->Valid()) {
+        // Исходник шире, чем надо — вырезаем центральный квадрат по меньшей стороне
+        const float iw = (float)img->Width(), ih = (float)img->Height();
+        const float side = std::min(iw, ih);
+        const RectF src((iw - side) * 0.5f, (ih - side) * 0.5f, side, side);
+        R().PushClipRound(box, rad);
+        R().DrawImage(img, box, src);
+        R().Pop();
+    } else if (!fallback.empty()) {
+        std::wstring ini = fallback.substr(0, 1);
+        float fs = box.w * 0.42f;
+        float tw = R().MeasureText(ini, fonts::H1, 700);
+        R().PushClipRound(box, rad);
+        R().Text(ini, fonts::H1, 700, theme::textMute,
+                 RectF(box.cx() - tw / 2, box.y + (box.h - fs) / 2, tw + gfx::S(6), fs),
+                 Align::Left, VAlign::Middle, false);
+        R().Pop();
+    }
+    R().Stroke(box, rad, Color(255, 255, 255, 30), 1.5f);
+}
+
+static void DrawChannels(AppState& a, const RectF& clip) {
+    float pad = gfx::S(32);
+    RectF inner(clip.x + pad, clip.y + pad, clip.w - pad * 2, clip.h - pad * 2);
+
+    // ── Поле ввода ───────────────────────────────────────────────────────
+    RectF search(inner.x, inner.y, inner.w, gfx::S(80));
+    ui::Card(2500, search, true, gfx::S(20));
+
+    float ix = search.x + gfx::S(26);
+    float iy = search.y + gfx::S(16);
+    float iw = search.w - gfx::S(52);
+    bool focused = ui::TextField(2501, RectF(ix, iy, iw - gfx::S(180), gfx::S(44)),
+                                 a.channelInput, TR(L"Ютуб, TikTok, VK… или @handle"));
+    if (ui::Button(2502, RectF(search.right() - gfx::S(160) - gfx::S(26), iy, gfx::S(160), gfx::S(44)),
+                   a.channelLoading ? TR(L"Загрузка…") : TR(L"Открыть"), Icon::Search,
+                   ui::Btn::Primary, !a.channelLoading))
+        AppProbeChannel(a);
+
+    R().Text(TR(L"Введите адрес канала, ссылку на его страницу или имя — @handle. Покажем аватар, подписчиков и список роликов"),
+             fonts::TINY, 400, theme::textMute,
+             RectF(ix, search.y + gfx::S(60), iw, gfx::S(16)),
+             Align::Left, VAlign::Middle, true);
+
+    float y = search.bottom() + gfx::S(22);
+
+    if (a.channelLoading) {
+        RectF card(inner.x, y, inner.w, gfx::S(150));
+        ui::Card(2510, card, false, gfx::S(20));
+        R().Text(TR(L"Загружаем канал…"), fonts::H2, 600, theme::text,
+                 RectF(card.x + gfx::S(26), card.y + gfx::S(28), gfx::S(400), gfx::S(28)),
+                 Align::Left, VAlign::Middle, false);
+        R().Text(TR(L"Получаем список роликов"), fonts::SMALL, 400, theme::textMute,
+                 RectF(card.x + gfx::S(26), card.y + gfx::S(62), gfx::S(400), gfx::S(20)),
+                 Align::Left, VAlign::Middle, false);
+        ui::Spinner(RectF(card.x + gfx::S(26), card.y + gfx::S(100), gfx::S(260), gfx::S(4)), theme::A1());
+        return;
+    }
+
+    if (!a.channelError.empty()) {
+        RectF card(inner.x, y, inner.w, gfx::S(196));
+        ui::Card(2511, card, false, gfx::S(20));
+        R().FillGradH(RectF(card.x + gfx::S(4), card.y + gfx::S(4), card.w - gfx::S(8), card.h - gfx::S(8)), gfx::S(17),
+                      Color(theme::danger.r, theme::danger.g, theme::danger.b, 34),
+                      Color(theme::danger.r, theme::danger.g, theme::danger.b, 8));
+        icons::Draw(R(), Icon::Error, RectF(card.x + gfx::S(26), card.y + gfx::S(24), gfx::S(24), gfx::S(24)),
+                    theme::danger, 2.0f);
+        R().Text(TR(L"Канал не открыт"), fonts::H2, 600, theme::text,
+                 RectF(card.x + gfx::S(62), card.y + gfx::S(20), gfx::S(400), gfx::S(28)),
+                 Align::Left, VAlign::Middle, false);
+        float eL = 1.f;
+        for (size_t i = 0; i < a.channelError.size(); ++i) if (a.channelError[i] == L'\n') eL += 1.f;
+        R().Text(a.channelError, fonts::SMALL, 400, theme::textDim,
+                 RectF(card.x + gfx::S(62), card.y + gfx::S(52), card.w - gfx::S(96), std::min(6.f, eL) * gfx::S(19)),
+                 Align::Left, VAlign::Top, true);
+        if (ui::Button(2512, RectF(card.x + gfx::S(62), card.bottom() - gfx::S(62), gfx::S(156), gfx::S(42)),
+                       TR(L"Повторить"), Icon::Refresh, ui::Btn::Secondary))
+            AppProbeChannel(a);
+        return;
+    }
+
+    if (!a.channel.ok()) return;
+
+    // ── Шапка канала ─────────────────────────────────────────────────────
+    const ChannelInfo& ch = a.channel;
+    float headH = gfx::S(168);
+    RectF head(inner.x, y, inner.w, headH);
+    ui::Card(2520, head, true, gfx::S(20));
+
+    RectF av(head.x + gfx::S(26), head.y + gfx::S(26), gfx::S(116), gfx::S(116));
+    DrawAvatar(av, ch.avatar, util::Utf8ToWide(ch.title));
+
+    float tx = av.right() + gfx::S(24);
+    R().Text(util::Utf8ToWide(ch.title), fonts::H1, 700, theme::text,
+             RectF(tx, head.y + gfx::S(24), head.right() - tx - gfx::S(150), gfx::S(34)),
+             Align::Left, VAlign::Middle, true);
+
+    std::wstring handle = util::Utf8ToWide(ch.handle.empty() ? ch.url : ch.handle);
+    if (!handle.empty())
+        R().Text(handle, fonts::SMALL, 400, theme::A1(),
+                 RectF(tx, head.y + gfx::S(58), head.right() - tx - gfx::S(150), gfx::S(20)),
+                 Align::Left, VAlign::Middle, true);
+
+    // подписчики и число роликов
+    struct Stat { Icon ic; std::wstring value; std::wstring label; };
+    std::vector<Stat> stats;
+    if (ch.followersKnown) {
+        stats.push_back({ Icon::Home, util::FormatCount(ch.followers), TR(L"подписчиков") });
+    }
+    stats.push_back({ Icon::Video, std::to_wstring((int)ch.videos.size()), TR(L"роликов загружено") });
+    float sx = tx;
+    for (const Stat& s : stats) {
+        float vw = R().MeasureText(s.value, fonts::BODY, 600);
+        float lw = R().MeasureText(s.label, fonts::TINY, 400);
+        float blockW = gfx::S(18) + gfx::S(18) + vw;
+        if (sx + blockW > head.right() - gfx::S(26)) break;
+        icons::Draw(R(), s.ic, RectF(sx, head.y + gfx::S(92), gfx::S(16), gfx::S(16)), theme::textMute, 1.8f);
+        R().Text(s.value, fonts::BODY, 600, theme::text,
+                 RectF(sx + gfx::S(24), head.y + gfx::S(84), vw + gfx::S(6), gfx::S(20)),
+                 Align::Left, VAlign::Middle, false);
+        R().Text(s.label, fonts::TINY, 400, theme::textMute,
+                 RectF(sx + gfx::S(24), head.y + gfx::S(104), lw + gfx::S(8), gfx::S(16)),
+                 Align::Left, VAlign::Middle, false);
+        sx += std::max(blockW, lw + gfx::S(24)) + gfx::S(36);
+    }
+
+    if (ui::IconButton(2521, RectF(head.right() - gfx::S(52), head.y + gfx::S(24), gfx::S(40), gfx::S(36)),
+                       Icon::External, TR(L"Открыть канал в браузере")))
+        if (!ch.url.empty()) util::OpenUrl(util::Utf8ToWide(ch.url).c_str());
+
+    y = head.bottom() + gfx::S(22);
+
+    // ── Список роликов ───────────────────────────────────────────────────
+    if (ch.videos.empty()) {
+        RectF card(inner.x, y, inner.w, gfx::S(120));
+        ui::Card(2530, card, false, gfx::S(20));
+        R().Text(TR(L"В канале нет доступных роликов"), fonts::BODY, 400, theme::textMute,
+                 RectF(card.x + gfx::S(26), card.y, card.w - gfx::S(52), card.h),
+                 Align::Center, VAlign::Middle, true);
+        return;
+    }
+
+    const float rowH = gfx::S(96);
+    const float listTop = y;
+    const float listH = clip.bottom() - gfx::S(32) - listTop;
+    if (listH <= gfx::S(120)) return;
+
+    R().Text(TR(L"Ролики"), fonts::H3, 600, theme::textDim,
+             RectF(inner.x, y, gfx::S(200), gfx::S(20)), Align::Left, VAlign::Middle, false);
+    std::wstring countTxt = std::to_wstring((int)ch.videos.size());
+    float ctw = R().MeasureText(countTxt, fonts::TINY, 400);
+    R().Text(countTxt, fonts::TINY, 400, theme::textMute,
+             RectF(inner.right() - ctw, y, ctw, gfx::S(20)), Align::Right, VAlign::Middle, false);
+    y += gfx::S(28);
+
+    // Рисуем только видимые строки: канал может содержать сотни роликов
+    float listTop2 = y;
+    float viewH = clip.bottom() - gfx::S(32) - listTop2;
+    float contentH = ch.videos.size() * (rowH + gfx::S(8));
+    ui::ScrollArea(2540, RectF(inner.x, listTop2, inner.w, viewH), a.channelListScroll, contentH,
+                   [&](const RectF& c) {
+        int first = std::max(0, (int)((a.channelListScroll - gfx::S(8)) / (rowH + gfx::S(8))));
+        int last = std::min((int)ch.videos.size(),
+                            first + (int)(viewH / (rowH + gfx::S(8))) + 3);
+        for (int i = first; i < last; ++i) {
+            const ChannelVideo& v = ch.videos[i];
+            float ry = c.y + i * (rowH + gfx::S(8));
+            RectF row(c.x, ry, c.w, rowH);
+            bool hov = ui::Hover(row);
+            float ha = ui::Ani(2600 + i, hov ? 1.f : 0.f, 18.f);
+            ui::Card(2550 + i, row, true, gfx::S(16));
+            if (ha > 0.01f)
+                R().FillRound(RectF(row.x + gfx::S(1), row.y + gfx::S(1), row.w - gfx::S(2), row.h - gfx::S(2)),
+                              gfx::S(15), Color(255, 255, 255, (BYTE)(14 * ha)));
+
+            // превью
+            RectF th(row.x + gfx::S(12), row.y + gfx::S(12), gfx::S(118), gfx::S(72));
+            std::wstring tu = util::Utf8ToWide(v.thumbnail);
+            engine::FetchImage(tu);
+            GfxImage* img = ImageCache::Get(tu);
+            R().FillRound(th, gfx::S(10), theme::surfaceAlt);
+            if (img && img->Valid()) {
+                R().DrawImage(img, th);
+            } else {
+                icons::Draw(R(), Icon::Video, RectF(th.cx() - gfx::S(16), th.cy() - gfx::S(16), gfx::S(32), gfx::S(32)),
+                            theme::textMute, 1.7f);
+            }
+            if (v.duration > 0) {
+                std::wstring dt = util::FormatTime((int)v.duration);
+                float dw = R().MeasureText(dt, fonts::TINY, 600) + gfx::S(12);
+                RectF db(th.right() - dw - gfx::S(6), th.bottom() - gfx::S(22), dw, gfx::S(18));
+                R().FillRound(db, gfx::S(5), Color(0, 0, 0, 200));
+                R().Text(dt, fonts::TINY, 600, Color(255, 255, 255, 240), db,
+                         Align::Center, VAlign::Middle, false);
+            }
+
+            // заголовок
+            float txr = th.right() + gfx::S(16);
+            float bw = gfx::S(150);
+            R().Text(util::Utf8ToWide(v.title), fonts::BODY, 600, theme::text,
+                     RectF(txr, row.y + gfx::S(14), row.right() - txr - bw - gfx::S(16), gfx::S(38)),
+                     Align::Left, VAlign::Top, true);
+
+// Лайки и просмотры. Плоский разбор канала их не отдаёт, поэтому
+            // данные дозапрашиваются в фоне — но только для видимых строк
+            // и не больше двух запросов одновременно.
+            std::wstring meta;
+            VideoStats vs;
+            auto sit = a.videoStats.find(util::Utf8ToWide(v.url));
+            if (sit != a.videoStats.end()) {
+                vs = sit->second;
+            } else {
+                AppRequestVideoStats(a, v.url);
+            }
+            if (vs.likes > 0)
+                meta = util::FormatCount(vs.likes) + TR(L" лайков") + L"  ·  " +
+                       util::FormatCount(vs.views) + TR(L" просмотров");
+            else if (vs.views > 0)
+                meta = util::FormatCount(vs.views) + TR(L" просмотров");
+            if (!meta.empty())
+                R().Text(meta, fonts::SMALL, 400, theme::textMute,
+                         RectF(txr, row.y + gfx::S(56), row.right() - txr - bw - gfx::S(16), gfx::S(20)),
+                         Align::Left, VAlign::Middle, true);
+            else if (sit == a.videoStats.end() && v.duration > 0)
+                R().Text(util::FormatTime((int)v.duration), fonts::SMALL, 400, theme::textMute,
+                         RectF(txr, row.y + gfx::S(56), row.right() - txr - bw - gfx::S(16), gfx::S(20)),
+                         Align::Left, VAlign::Middle, true);
+
+            if (ui::Button(2700 + i, RectF(row.right() - bw - gfx::S(12), row.cy() - gfx::S(19), bw, gfx::S(38)),
+                           TR(L"Скачать"), Icon::Download, ui::Btn::Secondary)) {
+                // Переносим ролик на главную: там выбор качества, кодека и прочего
+                a.urlInput = util::Utf8ToWide(v.url);
+                a.page = Page::Home;
+                a.scrollHome = 0;
+                AppProbe(a);
+            }
+        }
+    });
+}
+
 // ── Контент ───────────────────────────────────────────────────────────────
 
 void DrawContent(AppState& a, const RectF& r) {
@@ -1632,6 +1940,7 @@ void DrawContent(AppState& a, const RectF& r) {
 
     switch (a.page) {
         case Page::Home:      DrawHome(a, body); break;
+        case Page::Channels:  DrawChannels(a, body); break;
         case Page::Downloads: DrawDownloads(a, body); break;
         case Page::History:   DrawHistory(a, body); break;
         default:              DrawSettings(a, body); break;

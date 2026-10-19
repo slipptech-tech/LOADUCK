@@ -49,12 +49,50 @@ struct MediaInfo {
     std::vector<int> heights;      // доступные разрешения по убыванию
     std::vector<int> heightsH264;  // разрешения, доступные в H.264 (совместимые с любым плеером)
     bool hasH264 = false;          // есть ли в ролике хотя бы одна H.264-дорожка
+    bool hasVP9 = false;           // VP9 / VP09 — до 4K, но системные плееры не тянут
+    bool hasAV1 = false;           // AV1 — до 8K, лежит в mp4
 
     std::wstring error;
     bool ok() const { return error.empty() && !title.empty(); }
 };
 
 enum class JobState { Queued, Running, Paused, Done, Failed, Canceled };
+
+// ── Канал ─────────────────────────────────────────────────────────────────
+// Ролики канала. Заполняется плоским разбором плейлиста: это быстро, но
+// часть полей (просмотры, превью у части площадок) недоступна — превью
+// для YouTube восстанавливаем по идентификатору.
+struct ChannelVideo {
+    std::string id;
+    std::string title;
+    std::string url;
+    std::string thumbnail;
+    double duration = 0;
+    long long views = 0;
+    long long likes = 0;
+};
+
+// Статистика ролика: лайки и просмотры. Плоский разбор канала их не отдаёт,
+// поэтому они дозапрашиваются отдельно — но уже только для видимых строк.
+struct VideoStats {
+    long long likes = 0;
+    long long views = 0;
+    bool ok = false;
+};
+
+struct ChannelInfo {
+    std::string title;
+    std::string handle;        // @Something
+    std::string url;           // каноническая ссылка
+    std::string avatar;
+    std::string description;
+    long long followers = 0;
+    bool followersKnown = false;
+    std::vector<ChannelVideo> videos;
+
+    std::wstring error;
+    bool ok() const { return error.empty() && !title.empty(); }
+};
 
 struct JobProgress {
     double pct = 0.0;
@@ -146,6 +184,19 @@ std::wstring YtdlpVersion(const std::wstring& path);
 bool Probe(const std::wstring& url, MediaInfo& out, std::wstring& err,
            bool useCookies = false, const std::wstring& browser = L"");
 
+// Приводит ввод пользователя к ссылке на канал: «@handle», «youtube.com/@x»
+// и голое имя превращаются в рабочий адрес. Пустая строка — вход не похож на канал.
+std::wstring NormalizeChannelUrl(const std::wstring& input);
+
+// Разбор канала: аватар, название, подписчики и список роликов (блокирующий).
+bool ProbeChannel(const std::wstring& url, ChannelInfo& out, std::wstring& err,
+                  bool useCookies = false, const std::wstring& browser = L"",
+                  int maxVideos = 80);
+
+// Лайки и просмотры одного ролика (блокирующий, из фонового потока).
+VideoStats ProbeVideoStats(const std::wstring& url, bool useCookies = false,
+                           const std::wstring& browser = L"");
+
 // Загрузка компонента с прогрессом
 struct ComponentDownload {
     std::atomic<bool> running{ false };
@@ -163,8 +214,9 @@ void StartComponentDownload(const std::wstring& url, const std::wstring& dest,
 void FetchImage(const std::wstring& url);
 
 // Прочее
+// codec: auto | h264 | vp9 | av1
 std::string FormatSelector(const std::wstring& quality, const std::wstring& container,
-                           const std::wstring& exactFormatId, bool preferH264 = false);
+                           const std::wstring& exactFormatId, const std::wstring& codec = L"auto");
 std::string NormalizeExt(const std::string& ext);
 std::string RunCapture(const std::wstring& exe, const std::wstring& args, int* exitCode, size_t maxBytes = 4u * 1024 * 1024);
 

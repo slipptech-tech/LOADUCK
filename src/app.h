@@ -11,8 +11,9 @@
 #include <vector>
 #include <thread>
 #include <atomic>
+#include <unordered_map>
 
-enum class Page { Home = 0, Downloads = 1, History = 2, Settings = 3, Count = 4 };
+enum class Page { Home = 0, Channels = 1, Downloads = 2, History = 3, Settings = 4, Count = 5 };
 
 struct AppState {
     // ── окно ────────────────────────────────────────────────────────────
@@ -37,6 +38,7 @@ struct AppState {
     std::wstring exactFormat;
     std::wstring exactFormatLabel;
     bool  audioOnly = false;
+    std::wstring codec = L"auto";   // auto | h264 | vp9 | av1 — кодек видеодорожки
     bool  preferH264 = true;        // совместимые кодеки: H.264 + AAC (по умолчанию)
     bool  h264Available = true;     // есть ли H.264-дорожка в текущем ролике
     std::wstring audioFormat = L"mp3";
@@ -46,6 +48,16 @@ struct AppState {
     std::wstring outDir;
     float scrollHome = 0;
     float formatsScroll = 0;
+
+    // ── каналы ──────────────────────────────────────────────────────────
+    std::wstring channelInput;
+    bool  channelLoading = false;
+    ChannelInfo channel;
+    std::wstring channelError;
+    float scrollChannels = 0;
+    float channelListScroll = 0;
+    // Лайки и просмотры роликов. Значение (-1, -1) означает «запрос уже отправлен».
+    std::unordered_map<std::wstring, VideoStats> videoStats;
 
     // ── загрузки ────────────────────────────────────────────────────────
     std::vector<std::unique_ptr<Job>> jobs;
@@ -78,6 +90,9 @@ void AppProbe(AppState& a);
 void AppStartDownload(AppState& a);
 void AppPumpJobs(AppState& a);
 void AppCancelProbe(AppState& a);
+void AppProbeChannel(AppState& a);
+void AppCancelChannel(AppState& a);
+void AppRequestVideoStats(AppState& a, const std::string& url);
 void AppUpdateComponents(AppState& a);
 std::wstring AppYtdlpPath(AppState& a);
 std::wstring AppFfmpegPath(AppState& a);

@@ -661,6 +661,18 @@ void Renderer::PushClip(const RectF& r) {
     impl_->clips.push_back(r);
 }
 
+// Обрезка по скруглённому прямоугольнику. При радиусе в половину стороны
+// получается круг — именно так обрезается аватар. Обычная прямоугольная
+// обрезка для этого не годится: картинка осталась бы квадратной.
+void Renderer::PushClipRound(const RectF& r, float radius) {
+    if (!impl_ || !impl_->g) return;
+    if (radius <= 0.01f) { PushClip(r); return; }
+    G::GraphicsPath path;
+    path.AddArc(ToGp(r).X, ToGp(r).Y, ToGp(r).Width, ToGp(r).Height, 0.0f, 360.0f);
+    impl_->g->SetClip(&path, G::CombineModeIntersect);
+    impl_->clips.push_back(r);      // при Pop восстановится обычная обрезка
+}
+
 void Renderer::PushLayer(float opacity) {
     if (!impl_) return;
     float op = std::clamp(opacity, 0.f, 1.f);
@@ -698,6 +710,28 @@ bool Renderer::DrawImage(GfxImage* img, const RectF& dst) {
 
     impl_->g->SetInterpolationMode(G::InterpolationModeHighQualityBilinear);
     impl_->g->DrawImage(&bmp, dx, dy, dw, dh);
+    impl_->g->SetInterpolationMode(G::InterpolationModeDefault);
+    return true;
+}
+
+// Вырезка части изображения: нужна для круглых аватарок, где превью приходит
+// широкой полосой-баннером и нужен центральный квадрат.
+bool Renderer::DrawImage(GfxImage* img, const RectF& dst, const RectF& src) {
+    if (!impl_ || !impl_->g || !img || !img->Valid() || dst.w <= 0 || dst.h <= 0) return false;
+    if (src.w <= 0 || src.h <= 0) return false;
+
+    G::Bitmap bmp(img->Width(), img->Height(), img->Stride(), PixelFormat32bppPARGB,
+                  const_cast<BYTE*>(img->Pixels().data()));
+    if (bmp.GetLastStatus() != G::Ok) return false;
+
+    // Ограничиваем вырезку размерами картинки, чтобы не уйти за пределы
+    float sx = std::clamp(src.x, 0.f, (float)img->Width());
+    float sy = std::clamp(src.y, 0.f, (float)img->Height());
+    float sw = std::clamp(src.w, 1.f, (float)img->Width() - sx);
+    float sh = std::clamp(src.h, 1.f, (float)img->Height() - sy);
+
+    impl_->g->SetInterpolationMode(G::InterpolationModeHighQualityBilinear);
+    impl_->g->DrawImage(&bmp, ToGp(dst), sx, sy, sw, sh, G::UnitPixel);
     impl_->g->SetInterpolationMode(G::InterpolationModeDefault);
     return true;
 }

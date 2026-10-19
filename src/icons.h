@@ -9,7 +9,7 @@ enum class Icon {
     ChevronDown, ChevronRight, ChevronLeft, Music, Video, Refresh, Pause, Stop, Folder, External,
     Trash, Search, Sparkles, Queue, Shield, Info, Warn, Error, CheckCircle, Copy,
     Cookie, Subtitles, Thumbnail, Speed, Plus, Minus, Image, ArrowLeft, Drag,
-    Equalizer, Clock, Flame, Hd, Ticket, Maximize, Restore, Telegram, Github
+    Equalizer, Clock, Flame, Hd, Ticket, Maximize, Restore, Telegram, Github, Playlist
 };
 
 namespace icons {

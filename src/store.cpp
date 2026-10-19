@@ -69,6 +69,8 @@ void Store::Load() {
             s_.writeSubs = getb("writeSubs", false);
             s_.notifications = getb("notifications", true);
             s_.preferH264 = getb("preferH264", true);
+    s_.codec = getw("codec", L"auto");
+    if (s_.codec != L"h264" && s_.codec != L"vp9" && s_.codec != L"av1") s_.codec = L"auto";
             s_.closeToTray = getb("closeToTray", false);
             s_.confirmExit = getb("confirmExit", true);
             s_.cookiesFromBrowser = getb("cookiesFromBrowser", false);
@@ -116,6 +118,7 @@ void Store::Save() {
     j.set("writeSubs", Json(s_.writeSubs));
     j.set("notifications", Json(s_.notifications));
     j.set("preferH264", Json(s_.preferH264));
+    j.set("codec", Json(util::WideToUtf8(s_.codec)));
     j.set("closeToTray", Json(s_.closeToTray));
     j.set("confirmExit", Json(s_.confirmExit));
     j.set("cookiesFromBrowser", Json(s_.cookiesFromBrowser));

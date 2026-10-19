@@ -148,11 +148,14 @@ public:
 
     // Обрезка / прозрачность
     void PushClip(const RectF& r);
+void PushClipRound(const RectF& r, float radius);  // радиус = половина стороны даёт круг
     void PushLayer(float opacity);
     void Pop();
 
     // Изображения
     bool DrawImage(GfxImage* img, const RectF& dst);
+// То же, но с вырезкой части исходника (координаты в пикселях картинки)
+bool DrawImage(GfxImage* img, const RectF& dst, const RectF& src);
 
     // Временное перенаправление вывода в посторонний GDI+ Graphics (иконка, скриншот)
     void* NativeGraphics() const;

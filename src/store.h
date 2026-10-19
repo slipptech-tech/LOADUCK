@@ -20,6 +20,7 @@ struct Settings {
     bool writeSubs = false;
     bool notifications = true;
     bool preferH264 = true;        // H.264 + AAC: файл открывает любой системный плеер
+    std::wstring codec = L"auto";  // авто | h264 | vp9 | av1 — кодек видеодорожки
     bool closeToTray = false;
     bool confirmExit = true;
     bool cookiesFromBrowser = false;

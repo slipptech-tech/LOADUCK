@@ -56,9 +56,30 @@ struct VersionTask {
     std::wstring version;
 };
 
+struct ChannelTask {
+    std::wstring url;
+    std::atomic<bool> done{ false };
+    std::atomic<bool> valid{ true };
+    bool ok = false;
+    ChannelInfo info;
+    std::wstring err;
+};
+
+// Дозапрос статистики одного ролика канала (лайки, просмотры).
+struct StatsTask {
+    std::wstring url;
+    std::atomic<bool> done{ false };
+    VideoStats stats;
+};
+
 std::mutex g_taskMu;
 std::vector<std::shared_ptr<ProbeTask>> g_probes;
 std::vector<std::shared_ptr<VersionTask>> g_versions;
+std::vector<std::shared_ptr<ChannelTask>> g_channels;
+std::vector<std::shared_ptr<StatsTask>> g_statsTasks;
+
+// Сколько роликов канала опрашиваем одновременно
+constexpr int kMaxStatsInFlight = 2;
 
 HINSTANCE g_instance = nullptr;
 HWND g_hwnd = nullptr;
@@ -119,8 +140,21 @@ std::wstring AppFfmpegPath(AppState& a) {
     return engine::ResolveTool(a.store.Get().ffmpegPath, L"ffmpeg.exe");
 }
 
+// Название кодека для интерфейса. «Авто» подписываем результатом, а не
+// словом «авто»: пользователю важно, что он получит, а не как выбрано.
+const wchar_t* AppCodecName(AppState& a) {
+    if (a.codec == L"h264") return L"H.264";
+    if (a.codec == L"vp9")   return L"VP9";
+    if (a.codec == L"av1")   return L"AV1";
+    // авто
+    if (a.quality != L"best" && a.quality != L"audio" && _wtoi(a.quality.c_str()) > 1080)
+        return a.info.hasAV1 ? L"AV1" : L"VP9";
+    return (a.preferH264 && a.info.hasH264) ? L"H.264" : L"";
+}
+
 std::wstring AppQualityLabel(AppState& a, const std::wstring& q) {
-    const wchar_t* codec = (a.preferH264 && a.h264Available) ? TR(L" · H.264") : L"";
+    const wchar_t* cn = AppCodecName(a);
+    std::wstring codec = cn && *cn ? (L" · " + std::wstring(cn)) : L"";
     if (q == L"audio") return TR(L"Только аудио · ") + util::ToUpper(a.audioFormat);
     if (q.empty() || q == L"best") return std::wstring(TR(L"Лучшее доступное качество")) + codec;
     return q + L"p · " + util::ToUpper(a.audioOnly ? a.audioFormat : a.container) + codec;
@@ -138,6 +172,144 @@ void AppCancelProbe(AppState& a) {
         g_probes.clear();
     }
     a.probing = false;
+}
+
+void AppCancelChannel(AppState& a) {
+    {
+        std::lock_guard<std::mutex> lk(g_taskMu);
+        for (auto& t : g_channels) t->valid = false;
+        g_channels.clear();
+    }
+    a.channelLoading = false;
+}
+
+void AppProbeChannel(AppState& a) {
+    std::wstring raw = util::Trim(a.channelInput);
+    if (raw.empty()) {
+        toast::Show(TR(L"Введите адрес или имя канала"), toast::Kind::Warn);
+        Invalidate();
+        return;
+    }
+    std::wstring url = engine::NormalizeChannelUrl(raw);
+    if (url.empty()) {
+        toast::Show(TR(L"Это не похоже на канал"), toast::Kind::Error);
+        Invalidate();
+        return;
+    }
+    if (a.channelLoading) {
+        toast::Show(TR(L"Дождитесь окончания загрузки канала"), toast::Kind::Info, 2.0f);
+        return;
+    }
+    if (!engine::HasYtdlp(AppYtdlpPath(a))) {
+        toast::Show(TR(L"Не установлен yt-dlp — откройте Настройки"), toast::Kind::Error, 5.0f);
+        a.page = Page::Settings;
+        Invalidate();
+        return;
+    }
+
+    a.channelLoading = true;
+    a.channel = ChannelInfo();
+    a.channelError.clear();
+    a.channelListScroll = 0;
+    a.channelInput = raw;
+
+    auto task = std::make_shared<ChannelTask>();
+    task->url = url;
+    {
+        std::lock_guard<std::mutex> lk(g_taskMu);
+        for (auto& t : g_channels) t->valid = false;
+        g_channels.push_back(task);
+    }
+    const Settings& st = a.store.Get();
+    const bool useCookies = st.cookiesFromBrowser;
+    const std::wstring browser = st.cookiesBrowser;
+    std::thread([task, useCookies, browser] {
+        try {
+            task->ok = engine::ProbeChannel(task->url, task->info, task->err, useCookies, browser);
+        } catch (...) {
+            task->err = TR(L"Непредвиденная ошибка при разборе канала");
+        }
+        task->done = true;
+    }).detach();
+    Invalidate();
+}
+
+static void ApplyChannelResults(AppState& a) {
+    std::vector<std::shared_ptr<ChannelTask>> finished;
+    {
+        std::lock_guard<std::mutex> lk(g_taskMu);
+        for (size_t i = 0; i < g_channels.size();) {
+            if (g_channels[i]->done && g_channels[i]->valid) {
+                finished.push_back(g_channels[i]);
+                g_channels.erase(g_channels.begin() + i);
+                continue;
+            }
+            ++i;
+        }
+    }
+    for (auto& t : finished) {
+        if (!t->valid) continue;
+        a.channelLoading = false;
+        if (t->ok) {
+            a.channel = t->info;
+            a.channelError.clear();
+        } else {
+            a.channel = ChannelInfo();
+            a.channelError = t->err.empty() ? TR(L"Неизвестная ошибка") : t->err;
+        }
+        Invalidate();
+    }
+}
+
+// Лайки и просмотры: отправляем запрос только если для этого ролика его ещё не
+// было, и не больше двух одновременно — иначе на канале из сотни роликов
+// приложение забьёт сеть и YouTube включит проверку бота.
+void AppRequestVideoStats(AppState& a, const std::string& url) {
+    if (url.empty()) return;
+    const std::wstring key = util::Utf8ToWide(url);
+    {
+        auto it = a.videoStats.find(key);
+        if (it != a.videoStats.end()) return;          // уже известно или уже в работе
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_taskMu);
+        g_statsTasks.erase(std::remove_if(g_statsTasks.begin(), g_statsTasks.end(),
+                                          [](const std::shared_ptr<StatsTask>& t) { return t->done.load(); }),
+                           g_statsTasks.end());
+        if ((int)g_statsTasks.size() >= kMaxStatsInFlight) return;
+        a.videoStats[key] = VideoStats();              // метка «запрос отправлен»
+        auto task = std::make_shared<StatsTask>();
+        task->url = key;
+        g_statsTasks.push_back(task);
+        const Settings& st = a.store.Get();
+        const bool useCookies = st.cookiesFromBrowser;
+        const std::wstring browser = st.cookiesBrowser;
+        std::thread([task, useCookies, browser] {
+            task->stats = engine::ProbeVideoStats(task->url, useCookies, browser);
+            task->done = true;
+        }).detach();
+    }
+}
+
+static void ApplyStatsResults(AppState& a) {
+    std::vector<std::shared_ptr<StatsTask>> finished;
+    {
+        std::lock_guard<std::mutex> lk(g_taskMu);
+        for (size_t i = 0; i < g_statsTasks.size();) {
+            if (g_statsTasks[i]->done) {
+                finished.push_back(g_statsTasks[i]);
+                g_statsTasks.erase(g_statsTasks.begin() + i);
+                continue;
+            }
+            ++i;
+        }
+    }
+    if (finished.empty()) return;
+    for (auto& t : finished) {
+        VideoStats& dst = a.videoStats[t->url];
+        dst = t->stats;
+    }
+    Invalidate();
 }
 
 void AppProbe(AppState& a) {
@@ -286,7 +458,7 @@ void AppStartDownload(AppState& a) {
     opt.audioFormat = a.audioFormat;
     opt.formatSel = engine::FormatSelector(a.audioOnly ? L"audio" : a.quality,
                                            a.audioOnly ? a.audioFormat : a.container, a.exactFormat,
-                                           a.preferH264 && a.h264Available);
+                                           a.audioOnly ? L"auto" : a.codec);
     opt.container = a.audioOnly ? a.audioFormat : a.container;
     opt.mergeTo = !a.audioOnly && a.container != L"auto";
     opt.embedMeta = st.embedMeta;
@@ -385,6 +557,8 @@ void AppState::SyncFromSettings() {
     container = s.defaultContainer;
     audioOnly = (quality == L"audio");
     preferH264 = s.preferH264;
+    codec = s.codec;
+    if (codec != L"h264" && codec != L"vp9" && codec != L"av1") codec = L"auto";
     lang::Set((lang::Id)std::clamp(s.lang, 0, 2));
     theme::gAccent = theme::Accents()[theme::AccentIndexByName(s.accent)];
     util::EnsureDir(outDir);
@@ -508,6 +682,8 @@ static void OnTick(AppState& a) {
     }
 
     ApplyProbeResults(a);
+    ApplyChannelResults(a);
+    ApplyStatsResults(a);
     ApplyVersionResults(a);
     AppUpdateComponents(a);
     AppPumpJobs(a);
@@ -722,7 +898,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 } else if (vk == VK_RETURN) {
                     if (a.info.ok()) AppStartDownload(a);
                     else AppProbe(a);
-                } else if (vk >= '1' && vk <= '4') {
+                } else if (vk >= '1' && vk <= '5') {
                     a.page = (Page)(vk - '1');
                     ui::BlurAllFields();
                 }
