@@ -15,7 +15,7 @@ Features a dark UI, video previews, quality selection, download queue, and histo
 </p>
 
 <details>
-<summary><strong>MORE PHOTOS</strong></summary>
+<summary><strong>MORE PHOTOS　⌄</strong></summary>
 
 <br>
 
@@ -28,7 +28,6 @@ Features a dark UI, video previews, quality selection, download queue, and histo
 </p>
 
 </details>
-
 ## Features
 
 - **Link Analysis** — thumbnail, title, creator, view count, duration, available quality options, and estimated file sizes.
