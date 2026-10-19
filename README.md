@@ -15,7 +15,7 @@ Features a dark UI, video previews, quality selection, download queue, and histo
 </p>
 
 <details>
-<summary><strong>MORE PHOTOS　⌄</strong></summary>
+<summary><strong>MORE PHOTOS</strong></summary>
 
 <br>
 
