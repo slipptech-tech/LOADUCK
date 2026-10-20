@@ -120,7 +120,6 @@ The LO​​ADUCK browser extension allows you to send video links from your bro
    The filenames shown above are illustrative; the actual extension files may differ.
 
 6. Once installed, pin the LO​​ADUCK extension to the browser toolbar for convenient access.
-7. Launch `LOADUCK.exe` before using the extension.
 
 ### How to Use
 
