@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_extName__",
+  "version": "1.0.0",
+  "description": "__MSG_extDesc__",
+  "default_locale": "ru",
+  "minimum_chrome_version": "102",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1W2TdBP1uJBaJ+4lkBj82n9l41s77D4000MhalazXQM7WRkB13vEarF8keznDKam4NmNNfL6je7YM7UxHM9CeZtl8AK8a2fq2gE4e6kh5Ynqeq2e7MIzZeHkVfxKoDILycjjx1SnjkD0aoF+qSq/eKBdGCPjqLDRlKBvyR5d1YRe5aqHHCe6441noK0AE5TrripVE7sjKA4sKe4aoe3vOp87F0FYilTkTwQ5ojPtuOSjGyoyB0WvHQdzsersAJlsSSam40+ieZKoHjgIRQUKqAY753FxsQxTi7IBSN5FYTCBwxmsFTvoz/+m6ZUgAueuy29EMXrVmjo/hUUsehGwJQIDAQAB",
+  "permissions": [
+    "nativeMessaging",
+    "activeTab",
+    "tabs"
+  ],
+  "action": {
+    "default_title": "__MSG_actionTitle__",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "background": {
+    "service_worker": "service-worker.js"
+  }
+}

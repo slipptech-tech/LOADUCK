@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="head">
+    <img class="logo" src="icons/48.png" alt="">
+    <div class="brand">
+      <div class="title">LOADUCK</div>
+      <div class="sub" data-i18n="sub">Загрузка видео</div>
+    </div>
+  </header>
+
+  <section class="page">
+    <div class="host" id="host" data-i18n="checking">Проверяем страницу…</div>
+    <div class="url" id="url"></div>
+  </section>
+
+  <button class="go" id="go" disabled>
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 3v11m0 0 4.5-4.5M12 14l-4.5-4.5" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M4.5 18.5h15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <span id="goLabel" data-i18n="download">Скачать видео</span>
+  </button>
+
+  <button class="open" id="open">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M14 4h6v6M20 4l-8 8" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <span id="openLabel" data-i18n="openApp">Открыть приложение</span>
+  </button>
+
+  <div class="status" id="status"></div>
+
+  <footer class="foot" data-i18n="foot">
+    Качество, кодек и папка — в настройках LOADUCK
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
