@@ -1,4 +1,4 @@
- <h1 align="center">LOADUCK</h1>
+<h1 align="center">LOADUCK</h1>
 
 <p align="center">
   <img src="https://img.shields.io/badge/OPEN%20SOURCE-18181B?style=for-the-badge&logo=github&logoColor=white" alt="Open Source">
@@ -28,6 +28,7 @@ Features a dark UI, video previews, quality selection, download queue, and histo
 </p>
 
 </details>
+
 ## Features
 
 - **Link Analysis** — thumbnail, title, creator, view count, duration, available quality options, and estimated file sizes.
@@ -36,8 +37,9 @@ Features a dark UI, video previews, quality selection, download queue, and histo
 - **Settings** — download directory, filename template, maximum concurrent downloads, exit behavior, system tray toggle, and notifications.
 - **Components** — built-in installation and updating of `yt-dlp` and `ffmpeg` directly from the application.
 - **Convenience Features** — minimize to system tray, drag and drop links into the window, keyboard shortcuts, and clipboard integration.
+- **Browser Extension** — send video links from supported websites directly to LO​​ADUCK using the browser extension.
 
-**Supported services:** YouTube, TikTok, Instagram, X (Twitter), Facebook, Twitch, SoundCloud, Vimeo, Bilibili, and many others (inherited from yt-dlp).
+**Supported services:** YouTube, TikTok, Instagram, X (Twitter), Facebook, Twitch, SoundCloud, Vimeo, Bilibili, and many others supported by `yt-dlp`.
 
 ## Requirements
 
@@ -46,8 +48,9 @@ Features a dark UI, video previews, quality selection, download queue, and histo
 | OS | Windows 10/11 version 1809 or later (x64) |
 | Build | Visual Studio 2026 (MSVC 14.5x), C++20, Windows SDK 10.0.28000.0 |
 | Components | `bin\yt-dlp.exe` (required), `bin\ffmpeg.exe` (for merging media streams and embedding metadata) |
+| Browser extension | Google Chrome or Microsoft Edge with extension support |
 
-Both components are included in the `bin` directory. If either is missing, open **Settings → Components** and click **Update**.
+Both `yt-dlp.exe` and `ffmpeg.exe` are included in the `bin` directory. If either is missing, open **Settings → Components** and click **Update**.
 
 ## Building
 
@@ -55,16 +58,19 @@ Both components are included in the `bin` directory. If either is missing, open 
 :: x64 / Release
 msbuild LOADUCK.vcxproj -p:Configuration=Release -p:Platform=x64
 
-:: Or use Visual Studio: open LOADUCK.sln → select Release|x64 → press F5
+:: Or use Visual Studio: open LOADUCK.sln
+:: Select Release|x64 and build the project
 ```
 
 The compiled executable will be located at:
 
 `build\x64\Release\LOADUCK.exe`
 
-> Close any running instance of `LOADUCK.exe` before rebuilding; otherwise, the linker will be unable to overwrite the executable.
+> Close any running instance of `LOADUCK.exe` before rebuilding; otherwise, the linker may be unable to overwrite the executable.
 
 ## Running
+
+Run the application:
 
 ```bat
 build\x64\Release\LOADUCK.exe
@@ -75,6 +81,72 @@ You can also open a link directly from the command line:
 ```bat
 build\x64\Release\LOADUCK.exe -Url "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 ```
+
+## Browser Extension (Chrome / Edge)
+
+The LO​​ADUCK browser extension allows you to send video links from your browser to the desktop application without manually copying and pasting URLs.
+
+### Installation
+
+1. Build or download LO​​ADUCK and locate the project folder.
+2. Open Google Chrome and navigate to:
+
+   `chrome://extensions/`
+
+   For Microsoft Edge, navigate to:
+
+   `edge://extensions/`
+
+3. Enable **Developer mode** using the toggle in the top-right corner.
+4. Click **Load unpacked**.
+5. Open the LO​​ADUCK project directory and select the `extension` folder.
+
+   Example project structure:
+
+   ```text
+   LOADUCK/
+   ├── LOADUCK.exe
+   ├── bin/
+   │   ├── yt-dlp.exe
+   │   └── ffmpeg.exe
+   ├── extension/
+   │   ├── manifest.json
+   │   ├── popup.html
+   │   ├── popup.js
+   │   └── icons/
+   └── src/
+   ```
+
+   The filenames shown above are illustrative; the actual extension files may differ.
+
+6. Once installed, pin the LO​​ADUCK extension to the browser toolbar for convenient access.
+7. Launch `LOADUCK.exe` before using the extension.
+
+### How to Use
+
+1. Open a video on a supported website, such as YouTube.
+2. Click the LO​​ADUCK extension icon in your browser toolbar.
+3. Use the extension's action to send the current video URL to LO​​ADUCK.
+4. The desktop application can then analyze the link and let you select the available download quality.
+
+### Updating the Extension
+
+If the extension files change:
+
+1. Open `chrome://extensions/` or `edge://extensions/`.
+2. Find LO​​ADUCK in the list of installed extensions.
+3. Click the reload icon on its extension card.
+
+If you move the project to another directory, you may need to remove the extension and load the `extension` folder again.
+
+### Troubleshooting
+
+- **The extension does not appear:** Check that Developer mode is enabled and that you selected the correct `extension` folder.
+- **The extension does not respond:** Check that the extension is enabled and reload it from the extensions page.
+- **The desktop application does not receive the link:** Make sure LO​​ADUCK is running and that the extension-to-application integration has been configured correctly.
+- **The extension cannot be loaded:** Verify that the selected folder contains a valid `manifest.json` file.
+
+> **Important:** Loading an unpacked extension only installs it in the browser. Communication with `LOADUCK.exe` must also be implemented in the project, for example through Native Messaging or another supported local integration. The extension's actual functionality depends on that implementation.
 
 ## Keyboard Shortcuts
 
@@ -107,7 +179,11 @@ Rendering takes place in a 32-bit ARGB offscreen buffer, which is then displayed
 
 ## Data Storage
 
-Settings, download history, and logs are stored in `%LOCALAPPDATA%\LOADUCK`. You can access this directory using the **Open Folder** button in Settings.
+Settings, download history, and logs are stored in:
+
+`%LOCALAPPDATA%\LOADUCK`
+
+You can access this directory using the **Open Folder** button in Settings.
 
 ## Disclaimer
 
