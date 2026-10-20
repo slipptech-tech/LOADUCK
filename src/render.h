@@ -7,6 +7,7 @@
 #include <Windows.h>
 
 #include <cstdint>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -101,6 +102,10 @@ public:
     static GfxImage* Get(const std::wstring& key);
     static void Put(const std::wstring& key, GfxImage&& img);
     static void Trim(size_t maxItems);
+    // Счётчик догрузок: по нему приложение узнаёт, что пришла новая картинка,
+    // и перерисовывает кадр. Без этого превью появлялись только после того,
+    // как пользователь пошевелит мышью.
+    static uint64_t Version();
 
 private:
     struct Item {
@@ -110,6 +115,7 @@ private:
     static std::vector<std::pair<std::wstring, Item>> items_;
     static uint64_t clock_;
     static std::mutex mu_;
+    static std::atomic<uint64_t> version_;
 };
 
 // ── Рендерер ──────────────────────────────────────────────────────────────

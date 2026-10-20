@@ -253,6 +253,10 @@ static void ApplyChannelResults(AppState& a) {
         if (t->ok) {
             a.channel = t->info;
             a.channelError.clear();
+            // Превью первых роликов качаем сразу после разбора: пока пользователь
+            // читает шапку, картинки уже лежат в кэше и не «догоняют» список.
+            for (size_t i = 0; i < a.channel.videos.size() && i < 18; ++i)
+                engine::FetchImage(util::Utf8ToWide(a.channel.videos[i].thumbnail), false);
         } else {
             a.channel = ChannelInfo();
             a.channelError = t->err.empty() ? TR(L"Неизвестная ошибка") : t->err;
@@ -718,7 +722,17 @@ static void OnTick(AppState& a) {
 // Перерисовываем не каждый кадр, а только когда есть что показать:
     // идут анимации, живут уведомления, изменилось состояние задач или был ввод.
     static uint64_t lastSig = 0;
+    static uint64_t lastImgVer = 0;
     uint64_t sig = (uint64_t)a.probing * 131 + (uint64_t)a.jobs.size() * 7919;
+    // Догрузилось превью — кадр пора перерисовать, иначе картинка «висит»
+    // до первого движения мыши.
+    const uint64_t imgVer = ImageCache::Version();
+    sig += imgVer * 2654435761ull;
+    if (imgVer != lastImgVer) {
+        lastImgVer = imgVer;
+        // Чистим только здесь — между кадрами, когда ничего не рисуется.
+        ImageCache::Trim(120);
+    }
     for (auto& j : a.jobs) {
         sig = sig * 1000003ull + (uint64_t)j->GetState();
         JobProgress pr = j->GetProgress();

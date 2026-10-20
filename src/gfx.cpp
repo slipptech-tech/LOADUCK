@@ -21,7 +21,7 @@ void ImagePut(const std::wstring& key, std::vector<uint8_t>&& bytes) {
     ImageCache::Put(key, std::move(img));
 }
 
-void ImageTrim() { ImageCache::Trim(12); }
+void ImageTrim() { ImageCache::Trim(120); }
 
 // ── Фон ────────────────────────────────────────────────────────────────────
 

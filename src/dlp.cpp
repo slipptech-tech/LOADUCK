@@ -847,7 +847,7 @@ static void EnsureImagePool() {
     }
 }
 
-void FetchImage(const std::wstring& url) {
+void FetchImage(const std::wstring& url, bool urgent) {
     if (url.empty()) return;
     {
         std::lock_guard<std::mutex> lk(g_fetchMu);
@@ -855,9 +855,10 @@ void FetchImage(const std::wstring& url) {
         if (g_fetching.count(url)) return;
         g_fetching.insert(url);
         EnsureImagePool();
-        // Новые картинки важнее: показываем их в начало очереди, чтобы при
-        // прокрутке первым делом подгружалось то, что сейчас на экране.
-        g_imageQueue.push_front(url);
+        // То, что сейчас на экране, идёт вперёд — при прокрутке ждать
+        // предзагруженный хвост незачем. Остальное копится в конце очереди.
+        if (urgent) g_imageQueue.push_front(url);
+        else        g_imageQueue.push_back(url);
     }
     g_imageCv.notify_one();
 }
@@ -977,6 +978,25 @@ bool ProbeChannel(const std::wstring& url, ChannelInfo& out, std::wstring& err,
         if (best.empty() || w > 0) best = u;   // yt3 отдаёт по убыванию размера
     }
     out.avatar = best;
+    // yt3 отдаёт ссылку на исходник (=s0 или =w1060-…), это мегабайты ради
+    // кружка в 116 px. Просим готовый квадрат 240×240: и качается, и
+    // декодируется в разы быстрее. Ищем именно спецификатор размера: в самом
+    // идентификаторе тоже встречается «=» (base64-добивка).
+    if (out.avatar.find("googleusercontent.com") != std::string::npos ||
+        out.avatar.find("ggpht.com") != std::string::npos) {
+        size_t cut = std::string::npos;
+        for (size_t p = out.avatar.size(); p-- > 0; ) {
+            if (out.avatar[p] != '=' || p + 2 >= out.avatar.size()) continue;
+            char kind = out.avatar[p + 1];
+            if ((kind == 's' || kind == 'w' || kind == 'h') &&
+                std::isdigit((unsigned char)out.avatar[p + 2])) {
+                cut = p;
+                break;
+            }
+        }
+        if (cut != std::string::npos)
+            out.avatar = out.avatar.substr(0, cut) + "=s240-c-k-c0x00ffffff-no-rj";
+    }
 
     const Json& entries = j["entries"];
     for (size_t i = 0; i < entries.size(); ++i) {
@@ -988,18 +1008,20 @@ bool ProbeChannel(const std::wstring& url, ChannelInfo& out, std::wstring& err,
         v.duration = e["duration"].asNum(0);
         v.views = e["view_count"].asInt(0);
         if (v.title.empty() || v.url.empty()) continue;
-        // Плоский разбор не отдаёт превью — у YouTube его легко восстановить
-        // по идентификатору ролика, у остальных площадок остаётся заглушка.
-        const Json& eth = e["thumbnails"];
-        if (eth.size() > 0) {
+        // Превью. Подписанные ссылки с параметром sqp CDN отдаёт в WebP, а GDI+
+        // его не декодирует — картинка молча пропадала. Поэтому для YouTube
+        // всегда собираем неподписанный mqdefault.jpg: это гарантированный JPEG,
+        // уже 16:9 (без чёрных полей) и всего ~15 КБ.
+        if (e["ie_key"].asStr() == "Youtube" && v.id.size() >= 11) {
+            v.thumbnail = "https://i.ytimg.com/vi/" + v.id + "/mqdefault.jpg";
+        } else {
+            const Json& eth = e["thumbnails"];
             for (size_t k = 0; k < eth.size(); ++k) {
                 std::string u = eth[k]["url"].asStr();
                 if (u.empty()) continue;
                 if (v.thumbnail.empty() || eth[k]["width"].asInt(0) > 320) v.thumbnail = u;
             }
         }
-        if (v.thumbnail.empty() && v.id.size() >= 11)
-            v.thumbnail = "https://i.ytimg.com/vi/" + v.id + "/hqdefault.jpg";
         if (v.views == 0) v.views = e["view_count"].asInt(0);
         out.videos.push_back(std::move(v));
     }

@@ -211,7 +211,9 @@ void StartComponentDownload(const std::wstring& url, const std::wstring& dest,
                             std::shared_ptr<ComponentDownload> state);
 
 // Загрузка картинки (превью) в кэш
-void FetchImage(const std::wstring& url);
+// Загрузка превью в фоновую очередь. urgent — то, что видно на экране прямо
+// сейчас: такие картинки идут в начало очереди и не ждут предзагрузки.
+void FetchImage(const std::wstring& url, bool urgent = true);
 
 // Прочее
 // codec: auto | h264 | vp9 | av1

@@ -201,9 +201,14 @@ bool GfxImage::Load(const wchar_t* filePath) {
 
 std::vector<std::pair<std::wstring, ImageCache::Item>> ImageCache::items_;
 uint64_t ImageCache::clock_ = 0;
+std::mutex ImageCache::mu_;
+std::atomic<uint64_t> ImageCache::version_{ 0 };
 
+// Кадр рисуется в потоке окна, а картинки догружаются в четырёх фоновых —
+// без блокировки вектор перестраивался прямо под итерацией.
 GfxImage* ImageCache::Get(const std::wstring& key) {
     if (key.empty()) return nullptr;
+    std::lock_guard<std::mutex> lk(mu_);
     for (auto& kv : items_) {
         if (kv.first == key) {
             kv.second.used = ++clock_;
@@ -213,23 +218,30 @@ GfxImage* ImageCache::Get(const std::wstring& key) {
     return nullptr;
 }
 
+uint64_t ImageCache::Version() { return version_.load(); }
+
 void ImageCache::Put(const std::wstring& key, GfxImage&& img) {
     if (key.empty() || !img.Valid()) return;
-    for (auto& kv : items_) {
-        if (kv.first == key) {
-            kv.second.used = ++clock_;
-            *kv.second.img = std::move(img);
-            return;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (auto& kv : items_) {
+            // Уже есть — не перезаписываем на лету: кадр может рисоваться
+            // из этого же объекта прямо сейчас.
+            if (kv.first == key) return;
         }
+        Item it;
+        it.used = ++clock_;
+        it.img = std::make_unique<GfxImage>(std::move(img));
+        items_.emplace_back(key, std::move(it));
+        // Обрезка здесь намеренно НЕ делается: она уничтожала бы картинки,
+        // которые кадр держит прямо в этот момент. Чистим из OnTick, между
+        // кадрами, где это безопасно.
     }
-    Item it;
-    it.used = ++clock_;
-    it.img = std::make_unique<GfxImage>(std::move(img));
-    items_.emplace_back(key, std::move(it));
-    Trim(12);
+    version_.fetch_add(1);
 }
 
 void ImageCache::Trim(size_t maxItems) {
+    std::lock_guard<std::mutex> lk(mu_);
     while (items_.size() > maxItems) {
         size_t oldest = 0;
         for (size_t i = 1; i < items_.size(); ++i)
