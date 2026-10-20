@@ -1,4 +1,5 @@
 #include "pages.h"
+#include "ext.h"
 #include "ui.h"
 #include "icons.h"
 #include "util.h"
@@ -1346,8 +1347,8 @@ static void DrawSettings(AppState& a, const RectF& clip) {
     Settings& st = a.store.Get();
 
     // 230 (компоненты) + 364 (загрузки) + 220 (формат) + 150 (куки)
-// + 234 (интерфейс) + 150 (данные) + запас снизу
-float contentH = gfx::S(1348);
+// + 234 (интерфейс) + 330 (расширение) + 150 (данные) + запас снизу
+float contentH = gfx::S(1678);
     ui::ScrollArea(3000, inner, a.scrollSettings, contentH, [&](const RectF& content) {
         float y = content.y;
         float W = content.w;
@@ -1485,10 +1486,13 @@ float contentH = gfx::S(1348);
         ry += gfx::S(46);
 
         auto switchRow = [&](float sx, float sy2, float sw, const wchar_t* label, bool& val, Icon ic, int id) {
-            R().Text(label, fonts::BODY, 400, theme::text, RectF(sx, sy2, sw - gfx::S(62), gfx::S(32)),
-                     Align::Left, VAlign::Middle, true);
+            R().Text(label, fonts::BODY, 400, theme::text, RectF(sx, sy2, sw, gfx::S(32)),
+                     Align::Left, VAlign::Middle, false);
+            // Тумблер вплотную к своей подписи, а не у дальнего края карточки.
+            const float lw = R().MeasureText(label, fonts::BODY, 400);
             bool before = val;
-            if (ui::Toggle(id, RectF(sx + sw - gfx::S(52), sy2, gfx::S(52), gfx::S(30)), val, ic) && before != val)
+            if (ui::Toggle(id, RectF(sx + lw + gfx::S(14), sy2 + gfx::S(1), gfx::S(52), gfx::S(30)),
+                           val, ic) && before != val)
                 dirty = true;
         };
         float colW = (down.w - gfx::S(52) - gfx::S(24)) / 2;
@@ -1610,6 +1614,131 @@ float contentH = gfx::S(1348);
         }
         y += gfx::S(234);
 
+        // ── Расширение для браузера ──────────────────────────────────────
+        RectF exC(content.x, y, W, gfx::S(310));
+        ui::Card(3800, exC, false, S(20));
+        R().Text(TR(L"Расширение для браузера"), fonts::H2, 600, theme::text,
+                 RectF(exC.x + gfx::S(26), exC.y + gfx::S(16), gfx::S(420), gfx::S(26)),
+                 Align::Left, VAlign::Middle, false);
+        R().Text(TR(L"Кнопка LOADUCK в Chrome и Edge: одно нажатие — и видео уже скачивается"),
+                 fonts::TINY, 400, theme::textMute,
+                 RectF(exC.x + gfx::S(26), exC.y + gfx::S(44), gfx::S(760), gfx::S(18)),
+                 Align::Left, VAlign::Middle, true);
+
+        // Регистрацию в реестре проверяем не чаще раза в секунду: читать ключи
+        // на каждом кадре незачем.
+        if (a.extCheckedAt < 0 || ui::time - a.extCheckedAt > 1.0) {
+            a.extRegistered = ext::IsRegistered();
+            a.extCheckedAt = ui::time;
+        }
+
+        {
+            std::wstring status = !st.extensionEnabled ? TR(L"Выключено")
+                                : (a.extRegistered ? TR(L"Подключено") : TR(L"Не подключено"));
+            Color sc = !st.extensionEnabled ? theme::textMute
+                     : (a.extRegistered ? theme::success : theme::warning);
+            float tw = R().MeasureText(status, fonts::TINY, 600);
+            float sx = exC.right() - gfx::S(26) - tw - gfx::S(16);
+            R().Ellipse(sx, exC.y + gfx::S(29), gfx::S(4), gfx::S(4), sc);
+            R().Text(status, fonts::TINY, 600, sc,
+                     RectF(sx + gfx::S(12), exC.y + gfx::S(18), tw + gfx::S(8), gfx::S(22)),
+                     Align::Left, VAlign::Middle, false);
+        }
+
+        float ex = exC.x + gfx::S(26);
+        float ey = exC.y + gfx::S(74);
+
+        R().Text(TR(L"Принимать ссылки из браузера"), fonts::BODY, 400, theme::text,
+                 RectF(ex, ey, gfx::S(420), gfx::S(30)), Align::Left, VAlign::Middle, false);
+        {
+            const wchar_t* master = TR(L"Принимать ссылки из браузера");
+            R().Text(master, fonts::BODY, 400, theme::text,
+                     RectF(ex, ey, gfx::S(420), gfx::S(30)), Align::Left, VAlign::Middle, false);
+            const float lw = R().MeasureText(master, fonts::BODY, 400);
+            bool before = st.extensionEnabled;
+            if (ui::Toggle(3801, RectF(ex + lw + gfx::S(14), ey, gfx::S(52), gfx::S(30)),
+                           st.extensionEnabled, Icon::Link) && before != st.extensionEnabled) {
+                if (st.extensionEnabled) {
+                    if (ext::Install()) {
+                        a.extRegistered = true;
+                        toast::Show(TR(L"Связь с браузером установлена"), toast::Kind::Success, 3.0f);
+                    } else {
+                        st.extensionEnabled = false;
+                        toast::Show(TR(L"Не удалось записать настройки связи"), toast::Kind::Error, 4.0f);
+                    }
+                } else {
+                    ext::Uninstall();
+                    a.extRegistered = false;
+                }
+                a.extCheckedAt = -1;
+                dirty = true;
+            }
+        }
+
+        ey += gfx::S(40);
+        {
+            float bw = R().MeasureText(TR(L"Подключить браузер"), fonts::SMALL, 600) + gfx::S(44);
+            if (ui::Button(3802, RectF(ex, ey, bw, gfx::S(38)), TR(L"Подключить браузер"), Icon::Shield,
+                           a.extRegistered ? ui::Btn::Soft : ui::Btn::Primary, st.extensionEnabled)) {
+                if (ext::Install()) {
+                    a.extRegistered = true;
+                    a.extCheckedAt = -1;
+                    toast::Show(TR(L"Готово: загрузите папку extension в chrome://extensions"),
+                                toast::Kind::Success, 6.0f);
+                } else {
+                    toast::Show(TR(L"Не удалось записать настройки связи"), toast::Kind::Error, 4.0f);
+                }
+            }
+            float bx = ex + bw + gfx::S(10);
+            float bw2 = R().MeasureText(TR(L"Папка расширения"), fonts::SMALL, 600) + gfx::S(44);
+            if (ui::Button(3803, RectF(bx, ey, bw2, gfx::S(38)), TR(L"Папка расширения"), Icon::Folder,
+                           ui::Btn::Ghost)) {
+                std::wstring dir = ext::ExtensionDir();
+                if (dir.empty())
+                    toast::Show(TR(L"Папка extension не найдена рядом с программой"), toast::Kind::Warn, 5.0f);
+                else
+                    util::RevealInExplorer(dir);
+            }
+        }
+
+        ey += gfx::S(56);
+        {
+            float colW = (W - gfx::S(52) - gfx::S(24)) / 2;
+            switchRow(ex, ey, colW, TR(L"Запускать свёрнутым в трей"), st.extensionTray, Icon::Queue, 3804);
+            switchRow(ex + colW + gfx::S(24), ey, colW, TR(L"Закрывать после загрузки"),
+                      st.extensionAutoExit, Icon::Download, 3805);
+        }
+
+        ey += gfx::S(46);
+        R().Text(TR(L"Качество для загрузок из браузера"), fonts::TINY, 400, theme::textMute,
+                 RectF(ex, ey, gfx::S(360), gfx::S(16)), Align::Left, VAlign::Middle, false);
+
+        struct EQ { const wchar_t* id; const wchar_t* label; };
+        std::vector<EQ> eqs = {
+            { L"default", TR(L"Как в настройках") },
+            { L"best",    TR(L"Максимум") },
+            { L"1080",    L"1080p" },
+            { L"720",     L"720p" },
+            { L"480",     L"480p" },
+            { L"audio",   TR(L"Аудио") },
+        };
+        Flow eqf;
+        eqf.Init(RectF(ex, ey + gfx::S(20), W - gfx::S(52), 0), gfx::S(32), gfx::S(8));
+        for (size_t i = 0; i < eqs.size(); ++i) {
+            float cw = R().MeasureText(eqs[i].label, fonts::SMALL, 600) + gfx::S(36);
+            if (ui::Chip(3810 + (int)i, eqf.Take(cw, gfx::S(32)), eqs[i].label,
+                         st.extensionQuality == eqs[i].id)) {
+                st.extensionQuality = eqs[i].id;
+                dirty = true;
+            }
+        }
+
+        R().Text(TR(L"После подключения загрузите папку extension в chrome://extensions"),
+                 fonts::TINY, 400, theme::textMute,
+                 RectF(exC.x + gfx::S(26), exC.bottom() - gfx::S(24), W - gfx::S(52), gfx::S(18)),
+                 Align::Left, VAlign::Middle, true);
+        y += gfx::S(330);
+
         // ── Данные ───────────────────────────────────────────────────────
         RectF data(content.x, y, W, gfx::S(130));
         ui::Card(3700, data, false, S(20));
@@ -1676,7 +1805,7 @@ void DrawStatusBar(AppState& a, const RectF& r) {
                  Align::Left, VAlign::Middle, false);
         x += tw + gfx::S(50);
     }
-    R().Text(TR(L"Ctrl+V — вставить    ·    Ctrl+Enter — скачать    ·    Ctrl+1…4 — разделы"),
+    R().Text(TR(L"Ctrl+V — вставить    ·    Ctrl+Enter — скачать    ·    Ctrl+1…5 — разделы"),
              fonts::TINY, 400, theme::textMute, RectF(r.x, y - gfx::S(10), r.w - gfx::S(26), gfx::S(20)),
              Align::Right, VAlign::Middle, false);
 }

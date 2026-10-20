@@ -369,15 +369,6 @@ bool Toggle(int id, const Rect& r, bool& on, Icon ic) {
     // ручка
     float kx = tr.x + trH / 2 + (trW - trH) * s;
     Color knob = Mix(Color(226, 233, 246), theme::A1(), s * 0.6f);
-    if (s > 0.05f) {
-        for (int i = 0; i < 4; ++i) {
-            float t = (float)(i + 1) / 4.0f;
-            float alpha = 60.0f * s * (1.0f - t);
-            if (alpha < 2) continue;
-            R().Ellipse(tr.x + kx - tr.y * 0 + S(11) * t, tr.y + trH / 2, S(11) * t, S(11) * t,
-                        Color(theme::A1().r, theme::A1().g, theme::A1().b, (BYTE)alpha));
-        }
-    }
     R().Ellipse(kx, tr.y + trH / 2, trH / 2 - S(3), trH / 2 - S(3), knob);
 
     if (ic != Icon::None) {

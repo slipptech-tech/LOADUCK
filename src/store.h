@@ -29,6 +29,12 @@ struct Settings {
     int         lang = 0;                // 0 — русский, 1 — английский, 2 — украинский
     bool animatedBackground = true;
     bool soundOnFinish = false;
+
+    // ── расширение для браузера ──────────────────────────────────────────
+    bool extensionEnabled = false;                  // принимать ссылки из браузера
+    bool extensionTray = true;                      // стартовать свёрнутым в трей
+    bool extensionAutoExit = true;                  // закрываться после загрузки
+    std::wstring extensionQuality = L"default";     // default | best | 2160 | 1440 | 1080 | 720 | 480 | audio
 };
 
 struct HistoryItem {

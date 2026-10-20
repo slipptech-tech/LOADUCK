@@ -75,6 +75,17 @@ struct AppState {
     std::wstring ytdlpVersionCache;
     double ytdlpVersionAt = 0;
 
+    // ── запуск из браузерного расширения ────────────────────────────────
+    bool  startedFromExt = false;      // процесс запущен расширением
+    bool  pendingAutoDownload = false; // начать загрузку сразу после анализа
+    bool  autoExitAfterJobs = false;   // закрыться, когда всё скачается
+    bool  extWorkStarted = false;      // хотя бы одна загрузка была поставлена
+    bool  extFinished = false;         // работа закончена, ждём выхода
+    float extExitAt = 0;               // ui::time, когда закрываться
+    float extStartTime = 0;            // ui::time запуска из расширения
+    bool  extRegistered = false;       // связь с браузером установлена
+    double extCheckedAt = -1;          // когда проверяли регистрацию (ui::time)
+
     // ── данные ──────────────────────────────────────────────────────────
     Store store;
 
@@ -92,6 +103,8 @@ void AppPumpJobs(AppState& a);
 void AppCancelProbe(AppState& a);
 void AppProbeChannel(AppState& a);
 void AppCancelChannel(AppState& a);
+// Ссылка из браузера: сразу запускает анализ и (если включено) загрузку.
+void AppExtensionDownload(AppState& a, const std::wstring& url, bool showWindow);
 void AppRequestVideoStats(AppState& a, const std::string& url);
 void AppUpdateComponents(AppState& a);
 std::wstring AppYtdlpPath(AppState& a);

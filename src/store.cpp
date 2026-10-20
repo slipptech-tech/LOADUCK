@@ -79,6 +79,16 @@ void Store::Load() {
             s_.lang = std::clamp(geti("lang", 0), 0, 2);
             s_.animatedBackground = getb("animatedBackground", true);
             s_.soundOnFinish = getb("soundOnFinish", false);
+
+            s_.extensionEnabled = getb("extensionEnabled", false);
+            s_.extensionTray = getb("extensionTray", true);
+            s_.extensionAutoExit = getb("extensionAutoExit", true);
+            s_.extensionQuality = getw("extensionQuality", L"default");
+            if (s_.extensionQuality != L"default" && s_.extensionQuality != L"best" &&
+                s_.extensionQuality != L"2160" && s_.extensionQuality != L"1440" &&
+                s_.extensionQuality != L"1080" && s_.extensionQuality != L"720" &&
+                s_.extensionQuality != L"480" && s_.extensionQuality != L"audio")
+                s_.extensionQuality = L"default";
         }
     }
     if (ReadFile(HistoryPath(), text)) {
@@ -127,6 +137,10 @@ void Store::Save() {
     j.set("lang", Json(s_.lang));
     j.set("animatedBackground", Json(s_.animatedBackground));
     j.set("soundOnFinish", Json(s_.soundOnFinish));
+    j.set("extensionEnabled", Json(s_.extensionEnabled));
+    j.set("extensionTray", Json(s_.extensionTray));
+    j.set("extensionAutoExit", Json(s_.extensionAutoExit));
+    j.set("extensionQuality", Json(util::WideToUtf8(s_.extensionQuality)));
     WriteFile(SettingsPath(), j.dump(2));
 
     Json h = Json::array();

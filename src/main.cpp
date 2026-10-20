@@ -8,6 +8,7 @@
 #include "util.h"
 #include "toast.h"
 #include "lang.h"
+#include "ext.h"
 
 #include <Windows.h>
 #include <Windowsx.h>
@@ -86,6 +87,8 @@ HWND g_hwnd = nullptr;
 NOTIFYICONDATAW g_tray{};
 bool g_trayAdded = false;
 constexpr UINT g_trayMsg = WM_APP + 7;
+// Закрытие по завершении загрузки из расширения (минуя WM_CLOSE с вопросами).
+constexpr UINT g_extQuitMsg = WM_APP + 9;
 UINT64 g_lastFrame = 0;
 HICON g_appIcon = nullptr;
 bool g_forceFrame = true;
@@ -96,6 +99,13 @@ void Invalidate() {
 }
 
 } // namespace
+
+// Время в секундах по системным часам. ui::time обновляется только при
+// отрисовке, а скрытое в трее окно не перерисовывается — таймерам расширения
+// нужен независимый источник.
+static double NowSec() {
+    return (double)GetTickCount64() / 1000.0;
+}
 
 // ── Иконка приложения ─────────────────────────────────────────────────────
 
@@ -124,7 +134,9 @@ static void TrayBalloon(const wchar_t* title, const std::wstring& text) {
 }
 
 static void ShowFromTray() {
-    ShowWindow(g_hwnd, SW_SHOW);
+    // SW_SHOW не разворачивает окно, свёрнутое кнопкой «свернуть», — только показывает скрытое.
+    if (IsIconic(g_hwnd)) ShowWindow(g_hwnd, SW_RESTORE);
+    else ShowWindow(g_hwnd, SW_SHOW);
     SetWindowPos(g_hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SetForegroundWindow(g_hwnd);
     Invalidate();
@@ -181,6 +193,37 @@ void AppCancelChannel(AppState& a) {
         g_channels.clear();
     }
     a.channelLoading = false;
+}
+
+// Ссылка из браузера: сразу запускает анализ и (если включено) загрузку.
+void AppExtensionDownload(AppState& a, const std::wstring& url, bool showWindow) {    if (url.empty()) {
+        if (showWindow) ShowFromTray();
+        return;
+    }
+    // Новая задача отменяет прошлое ожидание выхода
+    a.extFinished = false;
+    a.extExitAt = 0;
+    a.extWorkStarted = false;
+    a.extStartTime = (float)NowSec();
+    a.pendingAutoDownload = true;
+
+    a.page = Page::Home;
+    a.scrollHome = 0;
+    a.info = MediaInfo();
+    a.probeError.clear();
+    a.urlInput = util::CleanUrl(url);
+
+    if (!a.startedFromExt) a.autoExitAfterJobs = false;
+    if (showWindow) ShowFromTray();
+
+    if (IsWindowVisible(a.hwnd)) {
+        toast::Show(TR(L"Ссылка из браузера — начинаем анализ"), toast::Kind::Info, 3.0f);
+    } else {
+        TrayBalloon(L"LOADUCK", TR(L"Ссылка из браузера — начинаем загрузку"));
+    }
+    AppCancelProbe(a);
+    AppProbe(a);
+    Invalidate();
 }
 
 void AppProbeChannel(AppState& a) {
@@ -389,7 +432,9 @@ static void ApplyProbeResults(AppState& a) {
         a.info = t->info;
         a.probeError.clear();
         const Settings& st = a.store.Get();
-        a.quality = st.defaultQuality;
+        // Расширение может просить своё качество; «как в настройках» оставляет общее.
+        a.quality = (a.pendingAutoDownload && st.extensionQuality != L"default")
+                        ? st.extensionQuality : st.defaultQuality;
         a.container = st.defaultContainer;
         a.audioOnly = (a.quality == L"audio");
         a.preferH264 = st.preferH264;
@@ -415,9 +460,19 @@ static void ApplyProbeResults(AppState& a) {
         }
         a.scrollHome = 0;
         toast::Show(TR(L"Ссылка проанализирована"), toast::Kind::Success, 2.4f);
+        // Из браузера — сразу в очередь, без второго клика.
+        if (a.pendingAutoDownload) {
+            a.pendingAutoDownload = false;
+            AppStartDownload(a);
+        }
     } else {
         a.info = MediaInfo();
+        a.pendingAutoDownload = false;
         a.probeError = t->err.empty() ? TR(L"Неизвестная ошибка") : t->err;
+        if (a.startedFromExt && a.autoExitAfterJobs) {
+            a.extFinished = true;
+            a.extExitAt = (float)NowSec() + 5.0f;
+        }
         toast::Show(TR(L"Не удалось получить видео"), toast::Kind::Error, 3.5f);
     }
     Invalidate();
@@ -721,6 +776,36 @@ static void OnTick(AppState& a) {
     }
 // Перерисовываем не каждый кадр, а только когда есть что показать:
     // идут анимации, живут уведомления, изменилось состояние задач или был ввод.
+    // Запуск из расширения: когда всё скачалось — закрываемся сами.
+    if (a.startedFromExt && a.autoExitAfterJobs) {
+        if (!a.jobs.empty()) a.extWorkStarted = true;
+        if (!a.extFinished) {
+            bool active = false;
+            for (auto& j : a.jobs) {
+                JobState s = j->GetState();
+                // Пауза — это не завершение: программу не закрываем.
+                if (s == JobState::Running || s == JobState::Queued || s == JobState::Paused) {
+                    active = true;
+                    break;
+                }
+            }
+
+            if (a.extWorkStarted && !active) {
+                a.extFinished = true;
+                a.extExitAt = (float)NowSec() + 2.5f;
+            } else if (!a.extWorkStarted && !a.probing && a.jobs.empty() &&
+                       NowSec() > (double)a.extStartTime + 6.0) {
+                // Анализ не начался или сразу упал — не висим в трее вечно
+                a.extFinished = true;
+                a.extExitAt = (float)NowSec() + 1.0f;
+            }
+        }
+        if (a.extFinished && NowSec() >= (double)a.extExitAt) {
+            a.extExitAt = 3.0e9f;   // чтобы не отправлять сообщение каждый тик
+            PostMessageW(a.hwnd, g_extQuitMsg, 0, 0);
+        }
+    }
+
     static uint64_t lastSig = 0;
     static uint64_t lastImgVer = 0;
     uint64_t sig = (uint64_t)a.probing * 131 + (uint64_t)a.jobs.size() * 7919;
@@ -783,6 +868,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
         case WM_PRINTCLIENT:
             RenderInto(a, (HDC)wp);
+            return 0;
+
+        case WM_COPYDATA: {
+            // Сюда приходит ссылка от расширения через уже запущенный экземпляр.
+            auto* cds = (COPYDATASTRUCT*)lp;
+            if (!cds || !cds->lpData || cds->cbData < sizeof(wchar_t)) return FALSE;
+            std::wstring url((const wchar_t*)cds->lpData, cds->cbData / sizeof(wchar_t));
+            while (!url.empty() && url.back() == L'\0') url.pop_back();
+            AppExtensionDownload(a, util::Trim(url), cds->dwData == ext::kCopyOpen);
+            return TRUE;
+        }
+
+        case g_extQuitMsg:
+            DestroyWindow(hwnd);
             return 0;
 
         case WM_SIZE: {
@@ -1058,8 +1157,60 @@ static std::wstring CmdUrl() {
     return out;
 }
 
-int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int nCmdShow) {
+// Аргумент --ext-download "https://…" — ссылка от браузерного расширения.
+static std::wstring CmdExtDownload() {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    std::wstring out;
+    for (int i = 1; i < argc; ++i) {
+        std::wstring a = util::ToLower(argv[i]);
+        if (a == L"--ext-download" && i + 1 < argc) { out = argv[i + 1]; break; }
+        if (a.rfind(L"--ext-download=", 0) == 0) {
+            std::wstring raw = argv[i];
+            out = raw.substr(15);
+            break;
+        }
+    }
+    if (argv) LocalFree(argv);
+    return util::Trim(out);
+}
+
+int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
+    // Chrome запускает LOADUCK.exe как нативный хост: без окна и без GDI+.
+    // Это должно произойти раньше любой инициализации интерфейса.
+    if (ext::IsHostMode()) return ext::RunHost();
+
     g_instance = hInst;
+
+    const std::wstring extUrl = CmdExtDownload();
+    const bool fromExt = !extUrl.empty();
+    const std::wstring launchUrl = fromExt ? extUrl : CmdUrl();
+
+    // Единственный экземпляр: второй копии быть не должно, иначе расширение
+    // откроет ещё одно окно рядом с уже запущенным. Мьютекс закрывает гонку,
+    // когда окно первого экземпляра ещё не успело создаться.
+    static HANDLE single = CreateMutexW(nullptr, FALSE, L"Local\\LOADUCK_SINGLE_INSTANCE");
+    const bool alreadyRunning = single && GetLastError() == ERROR_ALREADY_EXISTS;
+
+    HWND prev = nullptr;
+    if (alreadyRunning) {
+        for (int i = 0; i < 40 && !prev; ++i) {
+            prev = FindWindowW(L"LOADUCK_MAIN", nullptr);
+            if (!prev) Sleep(50);
+        }
+    } else {
+        prev = FindWindowW(L"LOADUCK_MAIN", nullptr);
+    }
+
+    if (prev) {
+        if (!launchUrl.empty()) ext::SendToRunning(launchUrl, !fromExt);
+        else {
+            ShowWindow(prev, SW_RESTORE);
+            SetForegroundWindow(prev);
+        }
+        return 0;
+    }
+    if (alreadyRunning) return 0;
 
     // Per-monitor DPI awareness (функция есть не во всех SDK — грузим динамически)
     using SetDpiCtx = BOOL(WINAPI*)(HANDLE);
@@ -1131,22 +1282,40 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int nCmdShow) {
         TrayAdd();
     }
 
+    // Запуск из расширения может быть полностью в трее: окно тогда не показываем.
+    const bool hideOnStart = fromExt && app.store.Get().extensionTray;
+
     // Точный таймер 16 мс: без этого Windows округляет интервал до 15.6 мс и кадры
     // «плавают», что заметно на анимациях.
     timeBeginPeriod(1);
 
-    ShowWindow(hwnd, SW_SHOWNORMAL);
-    SetForegroundWindow(hwnd);
+    if (!hideOnStart) {
+        ShowWindow(hwnd, SW_SHOWNORMAL);
+        SetForegroundWindow(hwnd);
+    }
     SetTimer(hwnd, 1, 16, nullptr);
     InvalidateRect(hwnd, nullptr, FALSE);
 
-    std::wstring url = CmdUrl();
-    if (!url.empty()) {
-        app.urlInput = util::CleanUrl(url);
-        if (util::IsSupportedUrl(app.urlInput))
+    if (!launchUrl.empty()) {
+        app.urlInput = util::CleanUrl(launchUrl);
+        if (util::IsSupportedUrl(app.urlInput)) {
+            if (fromExt) {
+                app.startedFromExt = true;
+                app.pendingAutoDownload = true;
+                app.autoExitAfterJobs = app.store.Get().extensionAutoExit;
+                app.extStartTime = (float)NowSec();
+                if (hideOnStart)
+                    TrayBalloon(L"LOADUCK", TR(L"Ссылка из браузера — начинаем загрузку"));
+            }
             AppProbe(app);
-        else
+        } else {
             toast::Show(TR(L"Ссылка из командной строки не поддерживается"), toast::Kind::Warn, 4.0f);
+            if (hideOnStart) {
+                // Неизвестная ссылка: окно в трее только запутает — показываемся.
+                ShowWindow(hwnd, SW_SHOWNORMAL);
+                SetForegroundWindow(hwnd);
+            }
+        }
     }
 
     MSG msg{};
