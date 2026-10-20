@@ -84,6 +84,7 @@
     <ClCompile Include="src\dlp.cpp" />
     <ClCompile Include="src\pages.cpp" />
     <ClCompile Include="src\toast.cpp" />
+<ClCompile Include="src\ext.cpp" />
   </ItemGroup>
 
   <ItemGroup>
@@ -99,6 +100,7 @@
     <ClInclude Include="src\dlp.h" />
     <ClInclude Include="src\pages.h" />
     <ClInclude Include="src\toast.h" />
+<ClInclude Include="src\ext.h" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
